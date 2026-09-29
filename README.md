@@ -1,36 +1,39 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Tofu Maker
 
-## Getting Started
+Reference-based generator for top-of-funnel static ads.
 
-First, run the development server:
+## Running
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3000.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Image providers
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Generation goes through the `AdGenerator` interface in `lib/generation/`. Pick a provider with `IMAGE_PROVIDER` in `.env.local`:
 
-## Learn More
+| `IMAGE_PROVIDER` | Behavior |
+| --- | --- |
+| `mock` (default) | Crops the reference to the target ratio and overlays the brief. No API key needed. |
+| `openai` | Calls the OpenAI image edits API with the reference (and product image, if given). Requires `OPENAI_API_KEY`; `OPENAI_IMAGE_MODEL` defaults to `gpt-image-1`. |
 
-To learn more about Next.js, take a look at the following resources:
+To add a provider, implement `AdGenerator` and register it in `lib/generation/index.ts`.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Reference library
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+"Choose from library" in the References step pulls static ads from other brands out of the Meta Ad Library, using the [`automation-lab/facebook-ads-library`](https://apify.com/automation-lab/facebook-ads-library) Apify actor. Set `APIFY_TOKEN` in `.env.local`; without it (or with `LIBRARY_PROVIDER=sample`) the library serves built-in sample data.
 
-## Deploy on Vercel
+Each new keyword, brand, or "Still running" toggle costs one scrape, about $0.03 for 50 ads. Sorting, platform, and run-time filters reuse that scrape for free. Raw results are saved in `.cache/apify/` for 24 hours, so repeated searches stay free across server restarts; delete the folder to force a fresh scrape.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Layout
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `lib/types.ts`: brief, reference, and generated ad types (the contract between steps)
+- `lib/references/score.ts`: "winning" score computed from public reference metrics
+- `lib/references/`: library types, Apify client, sample fallback, and `queryLibrary` in `source.ts`
+- `lib/generation/`: prompt builder and image providers
+- `app/api/generate/route.ts`: accepts the brief plus images as multipart form data and returns the generated ads
+- `app/api/library/`: library search, brand lookup, and an image proxy, which keep the Apify token on the server
+- `app/components/`: the input, review, and results UI
