@@ -3,8 +3,9 @@
 // Temporary Step 3 test page for image generation. Picks OpenAI or Gemini based on the
 // selected model and talks only to our own API routes; no API key reaches the browser.
 
-import { useState } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 import { DropZone } from "@/app/components/DropZone";
+import { BRANDS, type Product } from "@/lib/brands";
 import {
   GEMINI_ASPECT_RATIOS,
   GEMINI_IMAGE_MODELS,
@@ -26,6 +27,8 @@ import {
   type ImageGenerationResponse,
   type ImageGenerationSettings,
 } from "@/lib/openai/image-generation-types";
+import { QA_CATEGORIES, QA_CATEGORY_LABELS, QA_PASS_THRESHOLD } from "@/lib/image-qa/config";
+import type { QACategory, QACheckResult, QAExpectedOutput, QAResponse, QAResult } from "@/lib/image-qa/types";
 
 const selectClass =
   "w-full rounded-lg border border-zinc-300 bg-white py-2 pr-9 pl-3 text-sm focus:border-brand focus:outline-none";
@@ -67,6 +70,24 @@ const labelFor = (
 const seconds = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
 
 type PickedImage = { id: number; file: File; previewUrl: string };
+
+const PRODUCT_PRESETS = BRANDS.flatMap((brand) => brand.products).filter(
+  (product): product is Product & { image: string } => Boolean(product.image),
+);
+
+// OpenAI returns exact pixel sizes, so QA compares those; these are their ratios.
+const OPENAI_SIZE_RATIOS: Record<ImageGenerationSettings["size"], string> = {
+  "1024x1024": "1:1",
+  "1024x1536": "2:3",
+  "1536x1024": "3:2",
+};
+
+/** What QA needs for a result, captured at generation time so later edits don't affect it. */
+type QAInput = { productFile?: File; requestedCopy: string; expected: QAExpectedOutput };
+
+type QAState = { state: "running" } | { state: "done"; result: QAResult } | { state: "failed"; message: string };
+
+const qaKey = (resultId: number, index: number) => `${resultId}-${index}`;
 type Row = [label: string, value: string];
 
 /** Provider-agnostic view of a finished generation, so both render the same way. */
@@ -80,29 +101,37 @@ type Result = {
   /** Errors for variations that failed while others succeeded. */
   failures?: string[];
   debug?: Row[];
+  qaInput: QAInput;
 };
 
 type Success =
   | Exclude<ImageGenerationResponse, { error: string }>
   | Exclude<GeminiImageGenerationResponse, { error: string }>;
 
-function toResult(json: Success): Result {
+function toResult(json: Success, qaInput: QAInput): Result {
   const id = Date.now();
   // Only the OpenAI response has `mode`; both have `images`.
   if ("mode" in json) {
     return {
       id,
       provider: "openai",
+      qaInput,
       prompt: json.prompt,
       promptSent: json.promptSent,
       images: json.images,
+      failures: json.failures,
       settings: [
         ["Model", json.settings.model],
         ["Mode", json.mode === "edit" ? "Image edit" : "Text-to-image"],
         ["Quality", json.settings.quality],
         ["Size", labelFor(IMAGE_SIZES, json.settings.size)],
         ["Format", labelFor(IMAGE_OUTPUT_FORMATS, json.settings.outputFormat)],
-        ["Images", `${json.images.length} of ${json.settings.n}`],
+        [
+          "Images",
+          json.firstCallCount < json.settings.n
+            ? `${json.images.length} of ${json.settings.n} (first call returned ${json.firstCallCount}; ${json.settings.n - json.firstCallCount} extra request${json.settings.n - json.firstCallCount === 1 ? "" : "s"})`
+            : `${json.images.length} of ${json.settings.n}`,
+        ],
         ["Reference", json.referenceImageName ?? "none"],
         ["Product", json.productImageName ?? "none"],
         ["Time", seconds(json.durationMs)],
@@ -115,6 +144,7 @@ function toResult(json: Success): Result {
   return {
     id,
     provider: "gemini",
+    qaInput,
     prompt: json.prompt,
     promptSent: json.promptSent,
     images: json.images,
@@ -222,12 +252,296 @@ function UploadTile({
   );
 }
 
+const CHECK_ICONS: Record<QACheckResult["status"], { icon: string; className: string; label: string }> = {
+  pass: { icon: "✓", className: "text-green-600", label: "Passed" },
+  fail: { icon: "⚠", className: "text-red-600", label: "Failed" },
+  not_applicable: { icon: "–", className: "text-zinc-400", label: "Not applicable" },
+  error: { icon: "✕", className: "text-amber-600", label: "Could not be checked" },
+};
+
+function QACheckRow({ category, check }: { category: QACategory; check: QACheckResult }) {
+  const icon = CHECK_ICONS[check.status];
+  const points =
+    check.earned !== null ? `${check.earned}/${check.weight}` : check.status === "not_applicable" ? "N/A" : "—";
+  return (
+    <li>
+      <details open={check.status === "fail" || check.status === "error"} className="group">
+        <summary className="flex items-center justify-between gap-3 py-1 text-sm">
+          <span className="flex items-center gap-2">
+            <span aria-hidden className={`w-4 text-center font-semibold ${icon.className}`}>
+              {icon.icon}
+            </span>
+            <span className="sr-only">{icon.label}:</span>
+            {QA_CATEGORY_LABELS[category]}
+            {check.critical && (
+              <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 uppercase">
+                Critical
+              </span>
+            )}
+          </span>
+          <span className="font-mono text-xs text-zinc-600 tabular-nums">{points}</span>
+        </summary>
+        <div className="mb-2 ml-6 space-y-1 text-xs text-zinc-600">
+          <p>{check.description}</p>
+          {check.evidence && (
+            <p>
+              <span className="font-medium">Evidence:</span> {check.evidence}
+            </p>
+          )}
+          {check.expected && (
+            <p className="font-mono">
+              expected {check.expected} · actual {check.actual}
+            </p>
+          )}
+          {check.status === "pass" && check.severity === "minor" && <p className="italic">Minor note, not penalized.</p>}
+        </div>
+      </details>
+    </li>
+  );
+}
+
+/** Per-image QA score, status, and check breakdown. */
+function QAPanel({ qa, onRetry }: { qa?: QAState; onRetry: () => void }) {
+  if (!qa || qa.state === "running") {
+    return (
+      <div role="status" className="flex items-center gap-2 rounded-lg border border-zinc-200 p-3 text-sm text-zinc-600">
+        <span className="size-4 animate-spin rounded-full border-2 border-zinc-300 border-t-zinc-700" aria-hidden />
+        Running QA...
+      </div>
+    );
+  }
+
+  const retry = (
+    <button type="button" onClick={onRetry} className="mt-2 text-xs font-medium underline">
+      Retry QA
+    </button>
+  );
+
+  if (qa.state === "failed") {
+    return (
+      <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+        <p className="font-semibold">QA ERROR</p>
+        <p>Unable to complete QA check.</p>
+        <p className="mt-1 font-mono text-xs break-all">{qa.message}</p>
+        {retry}
+      </div>
+    );
+  }
+
+  const r = qa.result;
+  const failed = QA_CATEGORIES.filter((c) => r.checks[c].status === "fail");
+  const notApplicable = QA_CATEGORIES.filter((c) => r.checks[c].status === "not_applicable");
+  const applicablePoints = QA_CATEGORIES.filter((c) => r.checks[c].earned !== null).reduce(
+    (sum, c) => sum + r.checks[c].weight,
+    0,
+  );
+
+  return (
+    <div className="rounded-lg border border-zinc-200 p-3">
+      {r.status === "error" ? (
+        <div role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
+          <p className="font-semibold">QA ERROR</p>
+          <p>Unable to complete QA check. The image is not marked as passed.</p>
+          {r.errorDetail && <p className="mt-1 font-mono text-xs break-all">{r.errorDetail}</p>}
+          {retry}
+        </div>
+      ) : (
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-lg font-semibold tabular-nums">
+            Score: {r.score ?? "—"} / 100
+          </p>
+          <span
+            className={`rounded-full px-3 py-1 text-sm font-semibold ${
+              r.status === "pass" ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"
+            }`}
+          >
+            {r.status === "pass" ? "🟢 PASS" : "🔴 FAIL"}
+          </span>
+        </div>
+      )}
+
+      {r.criticalFailures.length > 0 && (
+        <p className="mt-2 text-xs text-red-700">
+          Critical failure overrides the score:{" "}
+          {r.criticalFailures.join(" ")}
+        </p>
+      )}
+      {r.status !== "error" && r.errorDetail && (
+        <p className="mt-2 text-xs text-amber-700">Some checks could not be completed: {r.errorDetail}</p>
+      )}
+
+      <h4 className="mt-3 text-xs font-semibold tracking-wide text-zinc-500 uppercase">QA Results</h4>
+      <ul className="mt-1 divide-y divide-zinc-100">
+        {QA_CATEGORIES.map((c) => (
+          <QACheckRow key={c} category={c} check={r.checks[c]} />
+        ))}
+      </ul>
+
+      {r.status !== "error" && failed.length === 0 && (
+        <p className="mt-2 text-sm text-green-700">✓ No issues detected</p>
+      )}
+      {notApplicable.length > 0 && r.score !== null && (
+        <p className="mt-2 text-xs text-zinc-500">
+          {notApplicable.map((c) => QA_CATEGORY_LABELS[c]).join(", ")} not applicable; score normalized over the
+          remaining {applicablePoints} points. Pass threshold: {QA_PASS_THRESHOLD}.
+        </p>
+      )}
+
+      <details className="mt-2 text-xs text-zinc-500">
+        <summary>QA debug</summary>
+        <dl className="mt-1 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5 font-mono">
+          <dt>Model</dt>
+          <dd>{r.debug.model}</dd>
+          <dt>Image detail</dt>
+          <dd>{r.debug.imageDetail}</dd>
+          <dt>Time</dt>
+          <dd>{seconds(r.debug.durationMs)}</dd>
+          <dt>Product reference</dt>
+          <dd>{r.debug.productReferenceProvided ? "sent" : "none"}</dd>
+          <dt>Requested copy</dt>
+          <dd>{r.debug.requestedCopyProvided ? "sent" : "none"}</dd>
+          <dt>Tokens</dt>
+          <dd>
+            {r.debug.inputTokens ?? "n/a"} in / {r.debug.outputTokens ?? "n/a"} out
+          </dd>
+          <dt>Response ID</dt>
+          <dd className="break-all">{r.debug.responseId ?? "n/a"}</dd>
+          <dt>Visible text</dt>
+          <dd className="break-words">{r.visibleText.length ? r.visibleText.join(" | ") : "none detected"}</dd>
+        </dl>
+      </details>
+    </div>
+  );
+}
+
+function ImageLightbox({
+  images,
+  index,
+  onIndex,
+  onClose,
+}: {
+  images: { dataUrl: string }[];
+  index: number;
+  onIndex: (index: number) => void;
+  onClose: () => void;
+}) {
+  const count = images.length;
+  const image = images[index];
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+      if (e.key === "ArrowLeft" && count > 1) onIndex((index - 1 + count) % count);
+      if (e.key === "ArrowRight" && count > 1) onIndex((index + 1) % count);
+    }
+    document.addEventListener("keydown", onKey);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [count, index, onClose, onIndex]);
+
+  if (!image) return null;
+
+  const go = (next: number) => (e: MouseEvent) => {
+    e.stopPropagation();
+    onIndex(next);
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Generated images"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4"
+      onClick={onClose}
+    >
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close"
+        className="absolute top-4 right-4 z-10 rounded-full bg-white/10 px-3 py-1.5 text-sm text-white hover:bg-white/20"
+      >
+        Close
+      </button>
+      {count > 1 && (
+        <button
+          type="button"
+          aria-label="Previous image"
+          onClick={go((index - 1 + count) % count)}
+          className="absolute left-3 z-10 flex size-11 items-center justify-center rounded-full bg-white/10 text-2xl text-white hover:bg-white/20 sm:left-6"
+        >
+          ‹
+        </button>
+      )}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={image.dataUrl}
+        alt={`Generated image ${index + 1} of ${count}`}
+        className="max-h-[calc(100vh-5rem)] max-w-[calc(100vw-8rem)] object-contain"
+        onClick={(e) => e.stopPropagation()}
+      />
+      {count > 1 && (
+        <button
+          type="button"
+          aria-label="Next image"
+          onClick={go((index + 1) % count)}
+          className="absolute right-3 z-10 flex size-11 items-center justify-center rounded-full bg-white/10 text-2xl text-white hover:bg-white/20 sm:right-6"
+        >
+          ›
+        </button>
+      )}
+      {count > 1 && (
+        <p className="absolute bottom-4 text-sm text-white tabular-nums">
+          {index + 1} / {count}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Generated → Running QA → QA Complete, for one result's images. */
+function PipelineStatus({ states }: { states: (QAState | undefined)[] }) {
+  const done = states.filter((s) => s && s.state !== "running").length;
+  const complete = done === states.length;
+  const steps = [
+    { label: "Generated", state: "done" },
+    { label: complete ? "QA run" : `Running QA... (${done}/${states.length})`, state: complete ? "done" : "active" },
+    { label: "QA Complete", state: complete ? "done" : "pending" },
+  ];
+  return (
+    <ol className="mb-3 flex flex-wrap items-center gap-2 text-xs" aria-label="Pipeline status">
+      {steps.map((step, i) => (
+        <li key={step.label} className="flex items-center gap-2">
+          {i > 0 && <span aria-hidden className="text-zinc-300">→</span>}
+          <span
+            aria-current={step.state === "active" ? "step" : undefined}
+            className={
+              step.state === "done"
+                ? "font-medium text-green-700"
+                : step.state === "active"
+                  ? "font-medium text-zinc-900"
+                  : "text-zinc-400"
+            }
+          >
+            {step.state === "done" ? "✓ " : ""}
+            {step.label}
+          </span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 export default function ImageGenerationTestPage() {
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState<Model>(IMAGE_MODELS[0]);
   // Object URLs are created/revoked together with the file so previews never leak.
   const [references, setReferences] = useState<PickedImage[]>([]);
   const [product, setProduct] = useState<PickedImage | null>(null);
+  const [productSku, setProductSku] = useState<string | null>(null);
   const [openaiSettings, setOpenaiSettings] = useState<
     Omit<ImageGenerationSettings, "model">
   >({
@@ -246,6 +560,11 @@ export default function ImageGenerationTestPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<Result[]>([]);
+  const [requestedCopy, setRequestedCopy] = useState("");
+  // QA state per generated image, keyed by qaKey(resultId, imageIndex).
+  const [qa, setQa] = useState<Record<string, QAState>>({});
+  // Which generated image is open full screen, within its result.
+  const [viewer, setViewer] = useState<{ resultId: number; index: number } | null>(null);
 
   const provider = providerOf(model);
   const limits = PROVIDERS[provider];
@@ -305,12 +624,35 @@ export default function ImageGenerationTestPage() {
     if (problem) return setError(problem);
     setError(null);
     if (product) URL.revokeObjectURL(product.previewUrl);
+    setProductSku(null);
     setProduct(newImage(file));
   }
 
   function removeProduct() {
     if (product) URL.revokeObjectURL(product.previewUrl);
+    setProductSku(null);
     setProduct(null);
+  }
+
+  async function selectProductPreset(preset: (typeof PRODUCT_PRESETS)[number]) {
+    setError(null);
+    try {
+      const res = await fetch(preset.image);
+      if (!res.ok) throw new Error(`Could not load the ${preset.sku} image.`);
+      const blob = await res.blob();
+      const file = new File([blob], preset.image.split("/").pop() ?? "product.png", {
+        type: blob.type || "image/png",
+      });
+      const problem = checkFile(file);
+      if (problem) return setError(problem);
+      setProduct((current) => {
+        if (current) URL.revokeObjectURL(current.previewUrl);
+        return newImage(file);
+      });
+      setProductSku(preset.sku);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load the product image.");
+    }
   }
 
   /** Builds the multipart body the selected provider's route expects. */
@@ -335,9 +677,52 @@ export default function ImageGenerationTestPage() {
     return form;
   }
 
+  /** Runs QA for one generated image. Each image gets its own request and score. */
+  async function runQA(result: Result, index: number) {
+    const key = qaKey(result.id, index);
+    setQa((q) => ({ ...q, [key]: { state: "running" } }));
+    try {
+      const image = result.images[index];
+      // The generated image is already a base64 data URL in memory; turn it back into a
+      // file so it uploads alongside the product reference. Our QA route forwards both to
+      // OpenAI server-side; the browser never calls OpenAI directly.
+      const blob = await (await fetch(image.dataUrl)).blob();
+      const form = new FormData();
+      form.append(
+        "generatedImage",
+        new File([blob], `generated.${extension(image.mimeType)}`, { type: image.mimeType }),
+      );
+      if (result.qaInput.productFile) form.append("productImage", result.qaInput.productFile);
+      form.append("prompt", result.prompt);
+      if (result.qaInput.requestedCopy) form.append("requestedCopy", result.qaInput.requestedCopy);
+      form.append("expectedAspectRatio", result.qaInput.expected.aspectRatio);
+      if (result.qaInput.expected.size) form.append("expectedSize", result.qaInput.expected.size);
+
+      const res = await fetch("/api/image-qa", { method: "POST", body: form });
+      const json = (await res
+        .json()
+        .catch(() => ({ error: `QA request failed (${res.status} ${res.statusText})` }))) as QAResponse;
+      if ("error" in json) throw new Error(json.error);
+      setQa((q) => ({ ...q, [key]: { state: "done", result: json } }));
+    } catch (err) {
+      setQa((q) => ({
+        ...q,
+        [key]: { state: "failed", message: err instanceof Error ? err.message : "QA request failed" },
+      }));
+    }
+  }
+
   async function generate() {
     setLoading(true);
     setError(null);
+    const qaInput: QAInput = {
+      productFile: product?.file,
+      requestedCopy: requestedCopy.trim(),
+      expected:
+        provider === "openai"
+          ? { aspectRatio: OPENAI_SIZE_RATIOS[openaiSettings.size], size: openaiSettings.size }
+          : { aspectRatio: geminiSettings.aspectRatio },
+    };
     try {
       const res = await fetch(limits.endpoint, {
         method: "POST",
@@ -349,13 +734,19 @@ export default function ImageGenerationTestPage() {
           error: `Request failed (${res.status} ${res.statusText})`,
         }))) as ImageGenerationResponse | GeminiImageGenerationResponse;
       if ("error" in json) throw new Error(json.error);
-      setResults((r) => [toResult(json), ...r]);
+      const result = toResult(json, qaInput);
+      setResults((r) => [result, ...r]);
+      // Start QA for every image right away; each runs independently and images show
+      // immediately while their QA is still in progress.
+      result.images.forEach((_, i) => void runQA(result, i));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Image generation failed");
     } finally {
       setLoading(false);
     }
   }
+
+  const openResult = viewer ? results.find((r) => r.id === viewer.resultId) : undefined;
 
   return (
     <main className="mx-auto w-full max-w-5xl px-6 py-10">
@@ -379,6 +770,24 @@ export default function ImageGenerationTestPage() {
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               placeholder="e.g. Use the first image as the composition reference. Create a new advertisement inspired by its composition while accurately incorporating the product..."
+              className="w-full rounded-lg border border-zinc-300 bg-white p-3 text-sm focus:border-brand focus:outline-none"
+            />
+          </div>
+          <div>
+            <label htmlFor="requestedCopy" className={labelClass}>
+              Requested ad copy (optional)
+            </label>
+            <p id="requestedCopyHint" className="mb-2 text-xs text-zinc-500">
+              The exact text the ad should show. Only used by QA to check spelling and copy; it is not sent to the
+              image model, so include it in your prompt too.
+            </p>
+            <textarea
+              id="requestedCopy"
+              aria-describedby="requestedCopyHint"
+              rows={3}
+              value={requestedCopy}
+              onChange={(e) => setRequestedCopy(e.target.value)}
+              placeholder='e.g. Headline: "Allergy Control" · CTA: "Shop now"'
               className="w-full rounded-lg border border-zinc-300 bg-white p-3 text-sm focus:border-brand focus:outline-none"
             />
           </div>
@@ -418,6 +827,30 @@ export default function ImageGenerationTestPage() {
               <p className="mb-2 text-xs text-zinc-500">
                 The product that should appear in the generated ad.
               </p>
+              <div className="mb-3 grid grid-cols-3 gap-2">
+                {PRODUCT_PRESETS.map((preset) => {
+                  const selected = productSku === preset.sku;
+                  return (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => selectProductPreset(preset)}
+                      className={`overflow-hidden rounded-xl border bg-white p-1.5 text-center ${
+                        selected ? "border-brand ring-2 ring-brand/30" : "border-zinc-200 hover:border-zinc-400"
+                      }`}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={preset.image}
+                        alt={preset.name}
+                        className="h-24 w-full rounded-lg bg-zinc-50 object-contain"
+                      />
+                      <span className="mt-1 block text-xs font-medium text-zinc-800">{preset.sku}</span>
+                    </button>
+                  );
+                })}
+              </div>
               <DropZone onFiles={setProductFile}>
                 <div className="grid gap-3 sm:grid-cols-3">
                   {product ? (
@@ -690,17 +1123,25 @@ export default function ImageGenerationTestPage() {
               key={r.id}
               className="rounded-xl border border-zinc-200 bg-white p-4"
             >
+              <PipelineStatus states={r.images.map((_, i) => qa[qaKey(r.id, i)])} />
               <div
                 className={`grid gap-4 ${r.images.length > 1 ? "sm:grid-cols-2" : ""}`}
               >
                 {r.images.map((img, i) => (
                   <figure key={i} className="space-y-2">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={img.dataUrl}
-                      alt={`Generated image ${i + 1}`}
-                      className="mx-auto max-h-[720px] w-auto rounded-lg bg-zinc-100 object-contain"
-                    />
+                    <button
+                      type="button"
+                      onClick={() => setViewer({ resultId: r.id, index: i })}
+                      aria-label={`View generated image ${i + 1} full screen`}
+                      className="block w-full cursor-zoom-in"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={img.dataUrl}
+                        alt={`Generated image ${i + 1}`}
+                        className="mx-auto max-h-[720px] w-auto rounded-lg bg-zinc-100 object-contain"
+                      />
+                    </button>
                     <a
                       href={img.dataUrl}
                       download={`${r.provider}-${r.id}-${i + 1}.${extension(img.mimeType)}`}
@@ -716,6 +1157,7 @@ export default function ImageGenerationTestPage() {
                         {img.text}
                       </figcaption>
                     )}
+                    <QAPanel qa={qa[qaKey(r.id, i)]} onRetry={() => runQA(r, i)} />
                   </figure>
                 ))}
               </div>
@@ -782,6 +1224,14 @@ export default function ImageGenerationTestPage() {
             </article>
           ))}
         </section>
+      )}
+      {openResult && viewer && (
+        <ImageLightbox
+          images={openResult.images}
+          index={Math.min(viewer.index, openResult.images.length - 1)}
+          onIndex={(index) => setViewer({ resultId: openResult.id, index })}
+          onClose={() => setViewer(null)}
+        />
       )}
     </main>
   );

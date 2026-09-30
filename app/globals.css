@@ -54,7 +54,7 @@ body {
     @apply flex flex-col gap-1 text-xs font-medium text-zinc-600;
   }
 
-  .field input:not([type="file"]),
+  .field input:not([type="file"]):not([type="range"]),
   .field select,
   .field textarea {
     @apply rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-normal text-zinc-900 outline-none focus:border-brand;

@@ -28,7 +28,7 @@ export const mockGenerator: AdGenerator = {
       [formatImage && `F: ${formatImage.name}`, styleImage && `S: ${styleImage.name}`].filter(Boolean).join(" · "),
     );
 
-    return Array.from({ length: count }, (_, i) => {
+    const urls = Array.from({ length: count }, (_, i) => {
       const hue = HUES[i % HUES.length];
       const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
   <image href="${refHref}" width="${w}" height="${h}" preserveAspectRatio="xMidYMid slice"/>
@@ -40,5 +40,6 @@ export const mockGenerator: AdGenerator = {
 </svg>`;
       return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
     });
+    return { urls, failures: [] };
   },
 };

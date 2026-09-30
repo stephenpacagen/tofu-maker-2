@@ -144,8 +144,31 @@ function sumUsage(variations: GeminiVariation[]): GeminiUsage | undefined {
   };
 }
 
-export async function generateGeminiImage(req: GeminiImageGenerationRequest): Promise<GeminiImageGenerationSuccess> {
+/**
+ * Low-level call used by both the test page and the main ad workflow: the caller has
+ * already built the full prompt and ordered the input images. Sends images first, then
+ * the text prompt, and runs one interaction per variation in parallel (the Interactions
+ * API has no image-count parameter). Throws only if every variation failed.
+ */
+export async function generateGeminiVariations(
+  prompt: string,
+  files: File[],
+  settings: Pick<GeminiImageGenerationRequest, "model" | "aspectRatio" | "imageSize"> & { n: number },
+) {
   const ai = getClient();
+  const { n, ...rest } = settings;
+  const input: GeminiInputBlock[] = [...(await Promise.all(files.map(toImageBlock))), { type: "text", text: prompt }];
+
+  const outcomes = await Promise.allSettled(Array.from({ length: n }, () => generateOne(ai, { ...rest, input })));
+  const succeeded = outcomes.flatMap((o) => (o.status === "fulfilled" ? [o.value] : []));
+  const failed = outcomes.flatMap((o) => (o.status === "rejected" ? [o.reason as unknown] : []));
+
+  // If every variation failed, surface the first error with its real status (e.g. 429).
+  if (succeeded.length === 0) throw failed[0];
+  return { succeeded, failed };
+}
+
+export async function generateGeminiImage(req: GeminiImageGenerationRequest): Promise<GeminiImageGenerationSuccess> {
   const started = Date.now();
   const { prompt, referenceImages, productImage, n, ...settings } = req;
 
@@ -154,20 +177,9 @@ export async function generateGeminiImage(req: GeminiImageGenerationRequest): Pr
   // see them in that order.
   const inputFiles = productImage ? [...referenceImages, productImage] : referenceImages;
   const promptSent = productImage ? describeProduct(referenceImages.length) + prompt : prompt;
-  const input: GeminiInputBlock[] = [
-    ...(await Promise.all(inputFiles.map(toImageBlock))),
-    { type: "text", text: promptSent },
-  ];
 
-  // The Interactions API has no image-count parameter, so each variation is its own
-  // interaction. They run in parallel; the same input blocks are reused for each.
-  const outcomes = await Promise.allSettled(Array.from({ length: n }, () => generateOne(ai, { ...settings, input })));
-  const succeeded = outcomes.flatMap((o) => (o.status === "fulfilled" ? [o.value] : []));
+  const { succeeded, failed } = await generateGeminiVariations(promptSent, inputFiles, { ...settings, n });
   const images = succeeded.map((s) => s.variation);
-  const failed = outcomes.flatMap((o) => (o.status === "rejected" ? [o.reason as unknown] : []));
-
-  // If every variation failed, surface the first error with its real status (e.g. 429).
-  if (succeeded.length === 0) throw failed[0];
 
   return {
     prompt,

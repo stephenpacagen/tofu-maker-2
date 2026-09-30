@@ -49,13 +49,13 @@ async function getJson<T>(url: string): Promise<T> {
 
 export function LibraryBrowser({
   suggestedQuery,
-  groupCount,
+  groupNames,
   addedTo,
   onAdd,
   onRemove,
 }: {
   suggestedQuery: string;
-  groupCount: number;
+  groupNames: string[];
   addedTo: (adId: string) => { groupIndex: number; role: ReferenceRole }[];
   onAdd: (ads: RankedLibraryAd[], groupIndex: number, role: ReferenceRole) => Promise<void>;
   onRemove: (adId: string, groupIndex: number, role: ReferenceRole) => void;
@@ -88,6 +88,8 @@ export function LibraryBrowser({
   const [adding, setAdding] = useState(false);
   const [pending, setPending] = useState<string[]>([]);
 
+  const groupCount = groupNames.length;
+  const groupLabel = (i: number) => groupNames[i]?.trim() || `Group ${i + 1}`;
   const targetGroup = Math.min(groupIndex, groupCount - 1);
 
   async function loadAds({
@@ -356,12 +358,12 @@ export function LibraryBrowser({
             <select className={INLINE_SELECT} value={targetGroup} onChange={(e) => setGroupIndex(Number(e.target.value))}>
               {Array.from({ length: groupCount }, (_, i) => (
                 <option key={i} value={i}>
-                  Group {i + 1}
+                  {groupLabel(i)}
                 </option>
               ))}
             </select>
           ) : (
-            <span className="font-medium text-zinc-900">Group 1</span>
+            <span className="font-medium text-zinc-900">{groupLabel(0)}</span>
           )}
           <span className="text-xs text-zinc-400">Use + Style or + Format on a card, or select several below.</span>
         </div>
@@ -460,7 +462,7 @@ export function LibraryBrowser({
                           e.stopPropagation();
                           void toggleQuickAdd(ad, r, isAdded);
                         }}
-                        title={isAdded ? `Remove from Group ${targetGroup + 1}` : `Add to Group ${targetGroup + 1}`}
+                        title={isAdded ? `Remove from ${groupLabel(targetGroup)}` : `Add to ${groupLabel(targetGroup)}`}
                         className={`rounded-md border px-2 py-1 text-xs font-medium ${
                           isAdded
                             ? "border-brand bg-brand text-white hover:bg-brand/85"
@@ -475,7 +477,7 @@ export function LibraryBrowser({
                 <div className="flex items-center justify-between gap-2 text-[11px]">
                   {added.length > 0 ? (
                     <span className="text-brand">
-                      In {added.map((a) => `Group ${a.groupIndex + 1} ${a.role}`).join(", ")}
+                      In {added.map((a) => `${groupLabel(a.groupIndex)} ${a.role}`).join(", ")}
                     </span>
                   ) : (
                     <span />
@@ -526,7 +528,7 @@ export function LibraryBrowser({
           <select className={INLINE_SELECT} value={targetGroup} onChange={(e) => setGroupIndex(Number(e.target.value))}>
             {Array.from({ length: groupCount }, (_, i) => (
               <option key={i} value={i}>
-                Group {i + 1}
+                {groupLabel(i)}
               </option>
             ))}
           </select>

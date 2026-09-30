@@ -5,13 +5,19 @@ import type { Product } from "@/lib/brands";
 import type { ProductVisibility } from "@/lib/types";
 
 const VISIBILITY_OPTIONS: { value: ProductVisibility; label: string }[] = [
-  { value: "secondary", label: "Product is secondary" },
+  { value: "secondary", label: "Product" },
   { value: "none", label: "No product" },
 ];
 
 function ProductPhoto({ product, file }: { product: Product; file?: File }) {
-  const uploadedUrl = useMemo(() => (file ? URL.createObjectURL(file) : null), [file]);
-  useEffect(() => () => void (uploadedUrl && URL.revokeObjectURL(uploadedUrl)), [uploadedUrl]);
+  const uploadedUrl = useMemo(
+    () => (file ? URL.createObjectURL(file) : null),
+    [file],
+  );
+  useEffect(
+    () => () => void (uploadedUrl && URL.revokeObjectURL(uploadedUrl)),
+    [uploadedUrl],
+  );
 
   const src = uploadedUrl ?? product.image;
   if (!src) {
@@ -22,55 +28,70 @@ function ProductPhoto({ product, file }: { product: Product; file?: File }) {
     );
   }
   // eslint-disable-next-line @next/next/no-img-element -- local blob or static preview
-  return <img src={src} alt={product.name} className="h-14 w-14 shrink-0 rounded-lg bg-zinc-100 object-cover" />;
+  return (
+    <img
+      src={src}
+      alt={product.name}
+      className="h-14 w-14 shrink-0 rounded-lg bg-zinc-100 object-cover"
+    />
+  );
 }
 
 export function ProductPicker({
   products,
-  selectedIds,
-  onToggle,
+  selectedId,
+  radioName,
+  onSelect,
   visibility,
   onVisibilityChange,
   photos,
   onPhotoChange,
 }: {
   products: Product[];
-  selectedIds: string[];
-  onToggle: (id: string) => void;
+  selectedId: string | null;
+  radioName: string;
+  onSelect: (id: string) => void;
   visibility: ProductVisibility;
   onVisibilityChange: (visibility: ProductVisibility) => void;
   photos: Record<string, File>;
   onPhotoChange: (id: string, file: File | null) => void;
 }) {
-  const selected = products.filter((p) => selectedIds.includes(p.id));
+  const selected = products.filter((p) => p.id === selectedId);
   const groups = Map.groupBy(products, (p) => p.category ?? "");
 
   return (
     <div className="flex flex-col gap-4">
       <div className="field">
-        <span>Products *</span>
+        <span>Product *</span>
         <div className="flex flex-col gap-3">
           {Array.from(groups, ([category, items]) => (
             <div key={category} className="flex flex-col gap-1.5">
-              {category && <span className="font-normal text-zinc-400">{category}</span>}
+              {category && (
+                <span className="font-normal text-zinc-400">{category}</span>
+              )}
               <div className="flex flex-wrap gap-2">
                 {items.map((p) => {
-                  const checked = selectedIds.includes(p.id);
+                  const checked = p.id === selectedId;
                   return (
                     <label
                       key={p.id}
                       className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm font-normal ${
-                        checked ? "border-brand bg-brand/5 text-zinc-900" : "border-zinc-300 text-zinc-700"
+                        checked
+                          ? "border-brand bg-brand/5 text-zinc-900"
+                          : "border-zinc-300 text-zinc-700"
                       }`}
                     >
                       <input
-                        type="checkbox"
+                        type="radio"
+                        name={radioName}
                         checked={checked}
-                        onChange={() => onToggle(p.id)}
+                        onChange={() => onSelect(p.id)}
                         className="accent-brand"
                       />
                       {p.name}
-                      <span className="font-mono text-xs text-zinc-400">{p.sku}</span>
+                      <span className="font-mono text-xs text-zinc-400">
+                        {p.sku}
+                      </span>
                     </label>
                   );
                 })}
@@ -82,7 +103,10 @@ export function ProductPicker({
 
       <div className="field">
         <span>Product in the ad</span>
-        <div role="radiogroup" className="flex w-fit rounded-lg border border-zinc-300 p-0.5">
+        <div
+          role="radiogroup"
+          className="flex w-fit rounded-lg border border-zinc-300 p-0.5"
+        >
           {VISIBILITY_OPTIONS.map((o) => (
             <button
               key={o.value}
@@ -91,7 +115,9 @@ export function ProductPicker({
               aria-checked={visibility === o.value}
               onClick={() => onVisibilityChange(o.value)}
               className={`rounded-md px-3 py-1.5 text-sm font-normal ${
-                visibility === o.value ? "bg-brand text-white" : "text-zinc-700 hover:bg-zinc-50"
+                visibility === o.value
+                  ? "bg-brand text-white"
+                  : "text-zinc-700 hover:bg-zinc-50"
               }`}
             >
               {o.label}

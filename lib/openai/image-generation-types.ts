@@ -60,6 +60,10 @@ export type ImageGenerationSuccess = {
   referenceImageName?: string;
   productImageName?: string;
   images: GeneratedImage[];
+  /** Images returned by the first request. Lower than settings.n means extra requests were made. */
+  firstCallCount: number;
+  /** Errors from extra requests that failed while others succeeded. */
+  failures: string[];
   durationMs: number;
 };
 

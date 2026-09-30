@@ -55,12 +55,12 @@ export type AdBrief = {
   productVisibility: ProductVisibility;
   dimensions: Dimension[];
   keywords: string[];
-  /** Total ads, split evenly across reference groups. */
+  /** Variations generated for each reference image, in every group. */
   targetAds: number;
   copyMode: CopyMode;
   copy: string;
   landingPages: LandingPage[];
-  referenceGroups: { id: string }[];
+  referenceGroups: { id: string; name?: string }[];
   references: BriefReference[];
 };
 
@@ -77,4 +77,7 @@ export type GeneratedAd = {
 
 /** Cap on images per run (ads × dimensions). */
 export const MAX_TOTAL_ADS = 24;
+/** Variations the input slider can request for each reference image. */
+export const MIN_VARIATIONS_PER_REFERENCE = 1;
+export const MAX_VARIATIONS_PER_REFERENCE = 4;
 export const MAX_REFERENCE_GROUPS = 8;

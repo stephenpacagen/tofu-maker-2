@@ -12,6 +12,8 @@ export type Batch = {
   id: string;
   /** Position of the group in the brief, for display ("Group 1"). */
   index: number;
+  /** Name set on the references step. Falls back to "Group N" when blank. */
+  name: string;
   count: number;
   jobs: BatchJob[];
 };
@@ -23,34 +25,40 @@ export function splitEvenly(total: number, n: number): number[] {
 }
 
 /**
- * Within a group, the ads are split evenly across style references, and each
- * style's share is split evenly across the format references. A group with
- * only one kind of reference splits across that kind alone.
+ * Every reference image in the group gets `variations` outputs. When a group
+ * has both style and format references, each style/format pairing gets that many.
  */
-function planGroupJobs(refs: BriefReference[], count: number): BatchJob[] {
+function planGroupJobs(refs: BriefReference[], variations: number): BatchJob[] {
   const styles = refs.filter((r) => r.role === "style");
   const formats = refs.filter((r) => r.role === "format");
 
   const jobs: BatchJob[] =
     styles.length === 0
-      ? splitEvenly(count, formats.length).map((n, j) => ({ style: null, format: formats[j], count: n }))
+      ? formats.map((format) => ({ style: null, format, count: variations }))
       : formats.length === 0
-        ? splitEvenly(count, styles.length).map((n, i) => ({ style: styles[i], format: null, count: n }))
-        : splitEvenly(count, styles.length).flatMap((n, i) =>
-            splitEvenly(n, formats.length).map((m, j) => ({ style: styles[i], format: formats[j], count: m })),
-          );
+        ? styles.map((style) => ({ style, format: null, count: variations }))
+        : styles.flatMap((style) => formats.map((format) => ({ style, format, count: variations })));
   return jobs.filter((j) => j.count > 0);
 }
 
-/** Each non-empty reference group is a batch; the target is split evenly across them. */
+/** Each non-empty reference group is a batch. `targetAds` is variations per reference image, not a run total. */
 export function planBatches(brief: Pick<AdBrief, "references" | "referenceGroups" | "targetAds">): Batch[] {
   const groups = brief.referenceGroups
     .map((g, index) => ({ ...g, index, refs: brief.references.filter((r) => r.groupId === g.id) }))
     .filter((g) => g.refs.length > 0);
   if (groups.length === 0) return [];
 
-  return splitEvenly(brief.targetAds, groups.length)
-    .map((count, i) => ({ id: groups[i].id, index: groups[i].index, count, jobs: planGroupJobs(groups[i].refs, count) }))
+  return groups
+    .map((group) => {
+      const jobs = planGroupJobs(group.refs, brief.targetAds);
+      return {
+        id: group.id,
+        index: group.index,
+        name: group.name?.trim() || `Group ${group.index + 1}`,
+        count: jobs.reduce((sum, job) => sum + job.count, 0),
+        jobs,
+      };
+    })
     .filter((b) => b.count > 0);
 }
 

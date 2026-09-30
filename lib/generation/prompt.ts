@@ -65,3 +65,14 @@ export function buildPrompt(brief: AdBrief, inputs: PromptInputs, dimension: Dim
 
   return lines.join("\n");
 }
+
+/** Asks the model to reframe an already-generated ad into another size. */
+export function buildResizePrompt(dimension: Dimension) {
+  const ratio = dimension.replace("x", ":");
+  return [
+    `Keep all the elements of this image, just resize it to ${dimension} (${ratio}).`,
+    "The image itself must become that shape and fill the frame.",
+    "Do not add padding, borders, letterboxing, or a blurred background.",
+    "Do not add, remove, or rearrange elements, and do not change the copy, colors, or subjects.",
+  ].join(" ");
+}
