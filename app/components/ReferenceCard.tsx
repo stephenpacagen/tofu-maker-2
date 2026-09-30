@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import { REFERENCE_DRAG_TYPE } from "./DropZone";
 import { scoreReference } from "@/lib/references/score";
 import type { ReferenceMetrics, ReferenceRole } from "@/lib/types";
 
@@ -42,21 +44,60 @@ export function ReferenceCard({
   usage,
   onChange,
   onRemove,
+  onDropReference,
 }: {
   reference: ReferenceDraft;
   usage: string;
   onChange: (next: ReferenceDraft) => void;
   onRemove: () => void;
+  /** Move another reference to this spot. */
+  onDropReference?: (id: string) => void;
 }) {
+  const [dragging, setDragging] = useState(false);
+  const [dropTarget, setDropTarget] = useState(false);
   const setMetric = <K extends keyof ReferenceMetrics>(key: K, value: ReferenceMetrics[K]) =>
     onChange({ ...reference, metrics: { ...reference.metrics, [key]: value } });
 
   return (
-    <div className="flex gap-3 rounded-xl border border-zinc-200 bg-white p-3">
+    <div
+      draggable
+      title="Drag to move"
+      className={`flex cursor-grab gap-3 rounded-xl border bg-white p-3 outline-none active:cursor-grabbing [&_button]:cursor-pointer [&_input]:cursor-text [&_select]:cursor-pointer [&_summary]:cursor-pointer ${
+        dropTarget ? "border-brand" : "border-zinc-200"
+      } ${dragging ? "opacity-50" : ""}`}
+      onDragStart={(e) => {
+        const target = e.target as HTMLElement;
+        if (target.closest("input, textarea, select, button, summary, a")) {
+          e.preventDefault();
+          return;
+        }
+        e.dataTransfer.setData(REFERENCE_DRAG_TYPE, reference.id);
+        e.dataTransfer.effectAllowed = "move";
+        setDragging(true);
+      }}
+      onDragEnd={() => setDragging(false)}
+      onDragOver={(e) => {
+        if (!onDropReference || !Array.from(e.dataTransfer.types).includes(REFERENCE_DRAG_TYPE)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = "move";
+        setDropTarget(true);
+      }}
+      onDragLeave={() => setDropTarget(false)}
+      onDrop={(e) => {
+        const id = e.dataTransfer.getData(REFERENCE_DRAG_TYPE);
+        if (!id || id === reference.id || !onDropReference) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setDropTarget(false);
+        onDropReference(id);
+      }}
+    >
       {/* eslint-disable-next-line @next/next/no-img-element -- local blob preview */}
       <img
         src={reference.previewUrl}
         alt={reference.file.name}
+        draggable={false}
         className="h-32 w-24 shrink-0 rounded-lg bg-zinc-100 object-cover"
       />
 
@@ -81,9 +122,7 @@ export function ReferenceCard({
         <label className="field">
           <span>Prompt</span>
           <input
-            placeholder={
-              reference.role === "style" ? "e.g. Same vibe, but no spiders" : "e.g. Keep the split screen, drop the badge"
-            }
+            placeholder="please specify here"
             value={reference.prompt}
             onChange={(e) => onChange({ ...reference, prompt: e.target.value })}
           />

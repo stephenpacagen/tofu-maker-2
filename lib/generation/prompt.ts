@@ -45,11 +45,20 @@ export function buildPrompt(brief: AdBrief, inputs: PromptInputs, dimension: Dim
     lines.push("Do not show the product itself; lead with an attention-grabbing concept tied to the brand.");
   }
 
-  if (brief.keywords.length > 0) lines.push(`Themes and keywords: ${brief.keywords.join(", ")}.`);
+  const groupId = inputs.format?.groupId ?? inputs.style?.groupId;
+  const group = groupId ? brief.referenceGroups.find((g) => g.id === groupId) : undefined;
+  const description = group?.description?.trim();
+  const keywords = group?.keywords?.length ? group.keywords : brief.keywords;
+  if (description) lines.push(`Description: ${description}`);
+  else if (keywords.length > 0) lines.push(`Description: ${keywords.join("; ")}.`);
 
   for (const lp of brief.landingPages ?? []) {
-    const messaging = [lp.title, lp.description, ...lp.headings.slice(0, 4)].filter(Boolean).join(" | ");
-    lines.push(`Align with the messaging of the landing page this ad drives to: ${messaging.slice(0, 500)}`);
+    const messaging = [lp.title, lp.description, ...lp.headings.slice(0, 6), lp.text.slice(0, 400)]
+      .filter(Boolean)
+      .join(" | ");
+    lines.push(
+      `Align with the messaging of the landing page this ad drives to (${lp.fileName}): ${messaging.slice(0, 800)}`,
+    );
   }
 
   if (brief.copyMode === "separate") {

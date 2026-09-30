@@ -12,6 +12,8 @@ export type Brand = {
   name: string;
   /** Button and highlight color for this brand's tab. */
   color: string;
+  /** Public site, used as the landing-page link placeholder. */
+  website: string;
   products: Product[];
 };
 
@@ -20,6 +22,7 @@ export const BRANDS: Brand[] = [
     id: "pacagen",
     name: "Pacagen",
     color: "#044eb8",
+    website: "https://pacagen.com",
     products: [
       {
         id: "cans",
@@ -62,9 +65,18 @@ export const BRANDS: Brand[] = [
     id: "reyou",
     name: "RE:YOU",
     color: "#5d2a2c",
+    website: "https://getreyou.com",
     products: [
-      { id: "sample-a", sku: "SAMPLE-A", name: "Sample Product A" },
-      { id: "sample-b", sku: "SAMPLE-B", name: "Sample Product B" },
+      {
+        id: "hair-revival-serum",
+        sku: "HAIR",
+        name: "Dual-Path Hair Revival Serum",
+      },
+      {
+        id: "brow-serum",
+        sku: "BROW",
+        name: "Dual-Path Brow Serum",
+      },
     ],
   },
 ];

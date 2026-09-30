@@ -1,6 +1,6 @@
 import { countAds, planBatches } from "@/lib/batches";
 import { BRANDS } from "@/lib/brands";
-import { toCreativeBreakdowns } from "@/lib/breakdown";
+import { toReferenceBreakdown } from "@/lib/breakdown";
 import { buildPrompt, getGenerator, type ImageInput } from "@/lib/generation";
 import {
   GEMINI_IMAGE_SIZES,
@@ -120,7 +120,9 @@ export async function POST(request: Request) {
   if (chunk.variationStart === 1 && chunk.dimension === brief.dimensions[0]) {
     const brandId = BRANDS.find((b) => b.name === brief.brand)!.id;
     const index = brief.referenceGroups.findIndex((g) => g.id === chunk.groupId);
-    const breakdown = toCreativeBreakdowns(brief, brandId).find((b) => b.group === index + 1);
+    const breakdown = toReferenceBreakdown(brief, brandId).reference_groups.find(
+      (b) => b.reference_group === index + 1,
+    );
     console.log(`[generate] group ${index + 1} breakdown\n${JSON.stringify(breakdown, null, 2)}`);
   }
 

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { countAds, planBatches, splitEvenly, type Batch } from "@/lib/batches";
 import type { Brand } from "@/lib/brands";
-import { toCreativeBreakdowns } from "@/lib/breakdown";
+import { toInputBreakdown, toReferenceBreakdown } from "@/lib/breakdown";
 import {
   DEFAULT_GENERATION_OPTIONS,
   GEMINI_IMAGE_SIZES,
@@ -17,7 +17,6 @@ import {
   type GenerateChunkResponse,
   type GenerationOptions,
 } from "@/lib/generation/models";
-import { parseLandingPage } from "@/lib/landingPage";
 import type { RankedLibraryAd } from "@/lib/references/library";
 import {
   DIMENSIONS,
@@ -403,7 +402,7 @@ function GenerationLightbox({
                 onClick={(e) => e.stopPropagation()}
               >
                 <p className="text-sm font-medium text-white">
-                  {groupNames[ad.batchId] ?? "Group"} · #{ad.variation} · {ad.dimension}
+                  {groupNames[ad.batchId] ?? "Reference group"} · #{ad.variation} · {ad.dimension}
                   {ads.length > 1 && (
                     <span className="text-white/70">
                       {" "}
@@ -455,6 +454,66 @@ const MIME_EXTENSIONS: Record<string, string> = {
 const extensionOf = (dataUrl: string) =>
   MIME_EXTENSIONS[dataUrl.match(/^data:([^;,]+)/)?.[1] ?? ""] ?? "png";
 
+type ReferenceGroupDraft = { id: string; name: string; description: string };
+
+function splitAttributes(raw: string) {
+  return raw
+    .split(";")
+    .map((attribute) => attribute.trim())
+    .filter(Boolean);
+}
+
+function uniqueKeywords(keywords: string[]) {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const keyword of keywords) {
+    const key = keyword.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(keyword);
+  }
+  return unique;
+}
+
+function CreativeBreakdownPanel({
+  title,
+  json,
+  data,
+  brandName,
+}: {
+  title: string;
+  json: string;
+  data: unknown;
+  brandName: string;
+}) {
+  return (
+    <details className="mt-6 rounded-lg border border-zinc-200" open>
+      <summary className="cursor-pointer px-4 py-2 text-xs font-medium text-zinc-600">
+        {title}
+      </summary>
+      <div className="flex gap-2 px-4 pt-1">
+        <button
+          type="button"
+          className="btn-secondary px-3 py-1 text-xs"
+          onClick={() => console.log(`[${brandName}] ${title}`, data)}
+        >
+          Log to console
+        </button>
+        <button
+          type="button"
+          className="btn-secondary px-3 py-1 text-xs"
+          onClick={() => void navigator.clipboard.writeText(json)}
+        >
+          Copy JSON
+        </button>
+      </div>
+      <pre className="m-4 overflow-x-auto rounded-lg bg-zinc-900 p-4 text-xs text-zinc-100">
+        {json}
+      </pre>
+    </details>
+  );
+}
+
 async function fetchAsFile(
   url: string,
   name = url.split("/").pop() ?? "image",
@@ -467,20 +526,26 @@ async function fetchAsFile(
 
 export function AdGenerator({ brand }: { brand: Brand }) {
   const [stage, setStage] = useState<Stage>("inputs");
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0 });
+  }, [stage]);
   const [referenceSource, setReferenceSource] =
     useState<ReferenceSource>("upload");
   const [productId, setProductId] = useState<string | null>(null);
   const [productPhotos, setProductPhotos] = useState<Record<string, File>>({});
   const [dimensions, setDimensions] = useState<Dimension[]>(["4x5"]);
-  const [keywordsText, setKeywordsText] = useState("");
   const [copyMode, setCopyMode] = useState<CopyMode>("separate");
   const [copy, setCopy] = useState("");
   const [productVisibility, setProductVisibility] =
     useState<ProductVisibility>("secondary");
   const [targetAds, setTargetAds] = useState(4);
+  const [variationsText, setVariationsText] = useState("4");
   const [landingPages, setLandingPages] = useState<LandingPage[]>([]);
-  const [groups, setGroups] = useState<{ id: string; name: string }[]>(() => [
-    { id: crypto.randomUUID(), name: "Group 1" },
+  const [landingUrl, setLandingUrl] = useState("");
+  const [landingError, setLandingError] = useState<string | null>(null);
+  const [landingLoading, setLandingLoading] = useState(false);
+  const [groups, setGroups] = useState<ReferenceGroupDraft[]>(() => [
+    { id: crypto.randomUUID(), name: "Reference group 1", description: "" },
   ]);
   const groupIds = groups.map((g) => g.id);
   const [references, setReferences] = useState<ReferenceDraft[]>([]);
@@ -509,15 +574,17 @@ export function AdGenerator({ brand }: { brand: Brand }) {
     products: selectedProducts.map(({ id, sku, name }) => ({ id, sku, name })),
     productVisibility,
     dimensions,
-    keywords: keywordsText
-      .split(",")
-      .map((k) => k.trim())
-      .filter(Boolean),
+    keywords: uniqueKeywords(groups.flatMap((g) => splitAttributes(g.description))),
     targetAds,
     copyMode,
     copy,
     landingPages,
-    referenceGroups: groups.map(({ id, name }) => ({ id, name })),
+    referenceGroups: groups.map(({ id, name, description }) => ({
+      id,
+      name,
+      description,
+      keywords: splitAttributes(description),
+    })),
     references: references.map((r) => ({
       id: r.id,
       groupId: r.groupId,
@@ -532,25 +599,30 @@ export function AdGenerator({ brand }: { brand: Brand }) {
   const totalAds = countAds(brief);
   const refName = (id: string | null) =>
     references.find((r) => r.id === id)?.file.name ?? "";
-  const breakdowns = toCreativeBreakdowns(brief, brand.id);
-  const breakdownJson = JSON.stringify(
-    breakdowns.length === 1 ? breakdowns[0] : breakdowns,
-    null,
-    2,
-  );
+  const stepOneBreakdown = toInputBreakdown(brief, brand.id);
+  const stepOneJson = JSON.stringify(stepOneBreakdown, null, 2);
+  const stepTwoBreakdown = toReferenceBreakdown(brief, brand.id);
+  const stepTwoJson = JSON.stringify(stepTwoBreakdown, null, 2);
 
   const emptyGroups = groups
     .map((g, i) =>
-      references.some((r) => r.groupId === g.id) ? null : g.name.trim() || `Group ${i + 1}`,
+      references.some((r) => r.groupId === g.id) ? null : g.name.trim() || `Reference group ${i + 1}`,
     )
     .filter((n) => n !== null);
+  const variationsNumber = /^\d+$/.test(variationsText) ? Number(variationsText) : null;
+  const variationsOutOfRange =
+    variationsNumber !== null &&
+    (variationsNumber < MIN_VARIATIONS_PER_REFERENCE ||
+      variationsNumber > MAX_VARIATIONS_PER_REFERENCE);
   const inputsMissing = [
     brief.products.length === 0 && "a product",
     dimensions.length === 0 && "a dimension",
+    (variationsNumber === null || variationsOutOfRange) &&
+      `variations from ${MIN_VARIATIONS_PER_REFERENCE} to ${MAX_VARIATIONS_PER_REFERENCE}`,
   ].filter(Boolean);
   const referencesMissing = [
     emptyGroups.length > 0 &&
-      `a style or format reference in group${emptyGroups.length > 1 ? "s" : ""} ${emptyGroups.join(", ")}`,
+      `a style or format reference in reference group${emptyGroups.length > 1 ? "s" : ""} ${emptyGroups.join(", ")}`,
   ].filter(Boolean);
   const canReview =
     inputsMissing.length === 0 &&
@@ -558,11 +630,22 @@ export function AdGenerator({ brand }: { brand: Brand }) {
     totalAds <= MAX_TOTAL_ADS;
 
   function addGroup() {
-    setGroups((prev) => [...prev, { id: crypto.randomUUID(), name: `Group ${prev.length + 1}` }]);
+    setGroups((prev) => [
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        name: `Reference group ${prev.length + 1}`,
+        description: prev[prev.length - 1]?.description ?? "",
+      },
+    ]);
   }
 
   function renameGroup(groupId: string, name: string) {
     setGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, name } : g)));
+  }
+
+  function setGroupDescription(groupId: string, description: string) {
+    setGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, description } : g)));
   }
 
   function removeGroup(groupId: string) {
@@ -656,6 +739,35 @@ export function AdGenerator({ brand }: { brand: Brand }) {
     if (target) removeReference(target.id);
   }
 
+  function moveReference(
+    id: string,
+    groupId: string,
+    role: ReferenceRole,
+    beforeId?: string,
+  ) {
+    setReferences((prev) => {
+      const current = prev.find((r) => r.id === id);
+      if (!current || beforeId === id) return prev;
+      const moving = { ...current, groupId, role };
+      const rest = prev.filter((r) => r.id !== id);
+      const next = [...rest];
+      if (!beforeId) {
+        let insertAt = next.length;
+        for (let i = next.length - 1; i >= 0; i--) {
+          if (next[i].groupId === groupId && next[i].role === role) {
+            insertAt = i + 1;
+            break;
+          }
+        }
+        next.splice(insertAt, 0, moving);
+        return next;
+      }
+      const index = next.findIndex((r) => r.id === beforeId);
+      next.splice(index === -1 ? next.length : index, 0, moving);
+      return next;
+    });
+  }
+
   function removeReference(id: string) {
     const target = references.find((r) => r.id === id);
     if (target) URL.revokeObjectURL(target.previewUrl);
@@ -675,17 +787,35 @@ export function AdGenerator({ brand }: { brand: Brand }) {
   }
 
   function batchLabel(b: Batch) {
-    return b.name.trim() || `Group ${b.index + 1}`;
+    return b.name.trim() || `Reference group ${b.index + 1}`;
   }
 
-  async function addLandingPages(files: FileList | null) {
-    if (!files) return;
-    const parsed = await Promise.all(
-      Array.from(files).map(async (file) =>
-        parseLandingPage(file.name, await file.text()),
-      ),
-    );
-    setLandingPages((prev) => [...prev, ...parsed]);
+  async function addLandingPage(url: string) {
+    const trimmed = url.trim();
+    if (!trimmed || landingLoading) return;
+    if (landingPages.length >= 5) {
+      setLandingError("Add at most 5 landing pages");
+      return;
+    }
+    setLandingLoading(true);
+    setLandingError(null);
+    try {
+      const res = await fetch("/api/landing-page", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: trimmed }),
+      });
+      const json = (await res.json()) as LandingPage & { error?: string };
+      if (!res.ok) throw new Error(json.error ?? "Could not read that page");
+      setLandingPages((prev) =>
+        prev.some((lp) => lp.fileName === json.fileName) ? prev : [...prev, json],
+      );
+      setLandingUrl("");
+    } catch (error) {
+      setLandingError(error instanceof Error ? error.message : "Could not read that page");
+    } finally {
+      setLandingLoading(false);
+    }
   }
 
   const updateChunk = (runId: string, key: string, patch: Partial<Chunk>) => {
@@ -958,37 +1088,39 @@ export function AdGenerator({ brand }: { brand: Brand }) {
               </div>
 
               <label className="field">
-                <span>Keywords (comma separated)</span>
+                <span>Variations per reference</span>
                 <input
-                  value={keywordsText}
-                  onChange={(e) => setKeywordsText(e.target.value)}
-                  placeholder="fresh, summer, clean ingredients"
+                  type="text"
+                  inputMode="numeric"
+                  value={variationsText}
+                  aria-invalid={variationsOutOfRange}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    if (raw !== "" && !/^\d+$/.test(raw)) return;
+                    setVariationsText(raw);
+                    const next = Number(raw);
+                    if (
+                      raw !== "" &&
+                      next >= MIN_VARIATIONS_PER_REFERENCE &&
+                      next <= MAX_VARIATIONS_PER_REFERENCE
+                    ) {
+                      setTargetAds(next);
+                    }
+                  }}
+                  className={
+                    variationsOutOfRange
+                      ? "!border-rose-500 !text-rose-600 focus:!border-rose-500"
+                      : undefined
+                  }
                 />
-              </label>
-
-              <label className="field">
-                <span className="flex items-center justify-between">
-                  Variations per reference
-                  <span className="font-semibold text-zinc-900 tabular-nums">{targetAds}</span>
-                </span>
-                <input
-                  type="range"
-                  min={MIN_VARIATIONS_PER_REFERENCE}
-                  max={MAX_VARIATIONS_PER_REFERENCE}
-                  step={1}
-                  value={targetAds}
-                  onChange={(e) => setTargetAds(Number(e.target.value))}
-                  aria-valuemin={MIN_VARIATIONS_PER_REFERENCE}
-                  aria-valuemax={MAX_VARIATIONS_PER_REFERENCE}
-                  aria-valuenow={targetAds}
-                  className="w-full accent-brand"
-                />
-                <span className="flex justify-between font-normal text-zinc-400">
-                  <span>{MIN_VARIATIONS_PER_REFERENCE}</span>
-                  <span>{MAX_VARIATIONS_PER_REFERENCE}</span>
-                </span>
-                <span className="font-normal text-zinc-400">
-                  Each reference image generates this many variations.
+                <span
+                  className={
+                    variationsOutOfRange ? "font-normal text-rose-600" : "font-normal text-zinc-400"
+                  }
+                >
+                  {variationsOutOfRange
+                    ? `Enter a number from ${MIN_VARIATIONS_PER_REFERENCE} to ${MAX_VARIATIONS_PER_REFERENCE}.`
+                    : `Type a number from ${MIN_VARIATIONS_PER_REFERENCE} to ${MAX_VARIATIONS_PER_REFERENCE}. Each reference image generates this many variations.`}
                 </span>
               </label>
 
@@ -1018,77 +1150,67 @@ export function AdGenerator({ brand }: { brand: Brand }) {
               )}
 
               <div className="field col-span-2">
-                <span>Landing page HTML files (optional)</span>
-                <div className="flex flex-wrap items-center gap-2">
-                  {landingPages.map((lp, i) => (
-                    <span
-                      key={`${lp.fileName}-${i}`}
-                      title={lp.headings.join("\n")}
-                      className="flex items-center gap-2 rounded-lg bg-zinc-100 px-3 py-1.5 text-sm font-normal text-zinc-800"
-                    >
-                      <span className="max-w-64 truncate">{lp.title}</span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setLandingPages((prev) =>
-                            prev.filter((_, j) => j !== i),
-                          )
-                        }
-                        className="text-zinc-400 hover:text-rose-600"
-                        aria-label={`Remove ${lp.fileName}`}
+                <span>Landing page link (optional)</span>
+                <form
+                  className="flex items-center gap-2"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void addLandingPage(landingUrl);
+                  }}
+                >
+                  <input
+                    type="text"
+                    inputMode="url"
+                    value={landingUrl}
+                    onChange={(e) => setLandingUrl(e.target.value)}
+                    placeholder={brand.website}
+                    aria-label="Landing page link"
+                    className="min-w-0 flex-1"
+                  />
+                  <button
+                    type="submit"
+                    disabled={landingLoading || !landingUrl.trim()}
+                    className="btn-secondary shrink-0"
+                  >
+                    {landingLoading ? "Reading…" : "Add"}
+                  </button>
+                </form>
+                <span className={landingError ? "font-normal text-rose-600" : "font-normal text-zinc-400"}>
+                  {landingError ??
+                    "Paste a link. We read the title, description, headings, and page copy."}
+                </span>
+                {landingPages.length > 0 && (
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    {landingPages.map((lp, i) => (
+                      <span
+                        key={`${lp.fileName}-${i}`}
+                        title={[lp.fileName, lp.description, ...lp.headings].filter(Boolean).join("\n")}
+                        className="flex items-center gap-2 rounded-lg bg-zinc-100 px-3 py-1.5 text-sm font-normal text-zinc-800"
                       >
-                        ×
-                      </button>
-                    </span>
-                  ))}
-                  <label className="cursor-pointer rounded-lg border border-dashed border-zinc-300 px-3 py-1.5 text-sm font-normal text-zinc-600 hover:border-zinc-500">
-                    Upload .html
-                    <input
-                      type="file"
-                      accept=".html,.htm,text/html"
-                      multiple
-                      className="hidden"
-                      onChange={(e) => {
-                        void addLandingPages(e.target.files);
-                        e.target.value = "";
-                      }}
-                    />
-                  </label>
-                </div>
+                        <span className="max-w-64 truncate">{lp.title}</span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setLandingPages((prev) => prev.filter((_, j) => j !== i))
+                          }
+                          className="text-zinc-400 hover:text-rose-600"
+                          aria-label={`Remove ${lp.title}`}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
-            <details className="mt-6 rounded-lg border border-zinc-200" open>
-              <summary className="cursor-pointer px-4 py-2 text-xs font-medium text-zinc-600">
-                Creative breakdown (Step 1 test)
-              </summary>
-              <div className="flex gap-2 px-4 pt-1">
-                <button
-                  type="button"
-                  className="btn-secondary px-3 py-1 text-xs"
-                  onClick={() =>
-                    console.log(
-                      `[${brand.name}] creative breakdown`,
-                      breakdowns,
-                    )
-                  }
-                >
-                  Log to console
-                </button>
-                <button
-                  type="button"
-                  className="btn-secondary px-3 py-1 text-xs"
-                  onClick={() =>
-                    void navigator.clipboard.writeText(breakdownJson)
-                  }
-                >
-                  Copy JSON
-                </button>
-              </div>
-              <pre className="m-4 overflow-x-auto rounded-lg bg-zinc-900 p-4 text-xs text-zinc-100">
-                {breakdownJson}
-              </pre>
-            </details>
+            <CreativeBreakdownPanel
+              title="Creative breakdown (Step 1 test)"
+              json={stepOneJson}
+              data={stepOneBreakdown}
+              brandName={brand.name}
+            />
           </section>
 
           <footer className="flex items-center justify-between">
@@ -1144,7 +1266,7 @@ export function AdGenerator({ brand }: { brand: Brand }) {
 
           {referenceSource === "library" && (
             <LibraryBrowser
-              suggestedQuery={brief.keywords.join(" ")}
+              suggestedQuery={brief.keywords.join(", ")}
               groupNames={groups.map((g) => g.name)}
               addedTo={libraryUsage}
               onAdd={addLibraryAds}
@@ -1155,9 +1277,10 @@ export function AdGenerator({ brand }: { brand: Brand }) {
           <section className="card">
             <h2 className="section-title mb-1">References *</h2>
             <p className="mb-5 text-sm text-zinc-500">
-              Each group generates its own batch. Every reference image in a
-              group gets the number of variations you set. A group needs at
-              least one style or format reference.
+              Each reference group generates its own batch. Write a description
+              for that reference group, then give it at least one style or
+              format reference.
+              Every reference image gets the number of variations you set.
             </p>
 
             <div className="flex flex-col gap-4">
@@ -1173,26 +1296,41 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                         <input
                           value={groups[groupIndex].name}
                           onChange={(e) => renameGroup(groupId, e.target.value)}
-                          aria-label={`Name for group ${groupIndex + 1}`}
-                          placeholder={`Group ${groupIndex + 1}`}
-                          className="min-w-0 max-w-xs rounded-md border border-transparent bg-transparent px-1.5 py-0.5 text-sm font-semibold text-zinc-900 outline-none hover:border-zinc-300 focus:border-brand focus:bg-white"
+                          aria-label={`Name for reference group ${groupIndex + 1}`}
+                          placeholder={`Reference group ${groupIndex + 1}`}
+                          className="min-w-0 max-w-sm rounded-md border border-transparent bg-transparent px-1.5 py-0.5 text-sm font-semibold text-zinc-900 outline-none hover:border-zinc-300 focus:border-brand focus:bg-white"
                         />
-                        <span className="shrink-0 text-sm font-normal text-zinc-400">
-                          {batch
-                            ? `· ${batch.count * dimensions.length} ads`
-                            : "· needs a reference"}
-                        </span>
+                        {batch && (
+                          <span className="shrink-0 text-sm font-normal text-zinc-400">
+                            · {batch.count * dimensions.length} ads
+                          </span>
+                        )}
                       </div>
                       {groupIds.length > 1 && (
                         <button
                           type="button"
                           onClick={() => removeGroup(groupId)}
-                          className="text-xs text-zinc-500 hover:text-rose-600"
+                          className="px-1 text-2xl leading-none text-zinc-400 hover:text-rose-600"
+                          aria-label="Remove reference group"
                         >
-                          Remove group
+                          ×
                         </button>
                       )}
                     </div>
+
+                    <label className="field mb-4">
+                      <span>Description</span>
+                      <textarea
+                        rows={3}
+                        value={groups[groupIndex].description}
+                        onChange={(e) => setGroupDescription(groupId, e.target.value)}
+                        placeholder="Write the description for this reference group"
+                        aria-label={`Description for ${groups[groupIndex].name.trim() || `reference group ${groupIndex + 1}`}`}
+                      />
+                      <span className="font-normal text-zinc-400">
+                        Separate more than one with a semicolon.
+                      </span>
+                    </label>
 
                     <div className="grid grid-cols-1 items-start gap-6 md:grid-cols-2">
                       {REFERENCE_ROLES.map((role) => {
@@ -1206,6 +1344,7 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                             onFiles={(files) =>
                               addReferences(groupId, role, files)
                             }
+                            onReference={(id) => moveReference(id, groupId, role)}
                           >
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
@@ -1270,6 +1409,9 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                                     )
                                   }
                                   onRemove={() => removeReference(r.id)}
+                                  onDropReference={(id) =>
+                                    moveReference(id, groupId, role, r.id)
+                                  }
                                 />
                               ))
                             )}
@@ -1288,10 +1430,17 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                   aria-label="Add reference group"
                   className="flex h-12 items-center justify-center gap-2 rounded-xl border-2 border-dashed border-zinc-300 text-sm text-zinc-500 hover:border-zinc-500 hover:text-zinc-800"
                 >
-                  <span className="text-xl leading-none">+</span> Add group
+                  <span className="text-xl leading-none">+</span> Add reference group
                 </button>
               )}
             </div>
+
+            <CreativeBreakdownPanel
+              title="Creative breakdown (Step 2 test)"
+              json={stepTwoJson}
+              data={stepTwoBreakdown}
+              brandName={brand.name}
+            />
           </section>
 
           <footer className="flex items-center justify-between gap-4">
@@ -1307,7 +1456,7 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                 ? `Still needed: ${referencesMissing.join(", ")}`
                 : totalAds > MAX_TOTAL_ADS
                   ? `${totalAds} ads is over the ${MAX_TOTAL_ADS} ad limit for one run.`
-                  : `${totalAds} ads (${dimensions.join(", ")}) across ${batches.length} group${batches.length === 1 ? "" : "s"}`}
+                  : `${totalAds} ads (${dimensions.join(", ")}) across ${batches.length} reference group${batches.length === 1 ? "" : "s"}`}
             </p>
             <button
               type="button"
@@ -1342,8 +1491,6 @@ export function AdGenerator({ brand }: { brand: Brand }) {
               </dd>
               <dt className="text-zinc-500">Dimensions</dt>
               <dd>{brief.dimensions.join(", ")}</dd>
-              <dt className="text-zinc-500">Keywords</dt>
-              <dd>{brief.keywords.join(", ") || "None"}</dd>
               <dt className="text-zinc-500">Copy</dt>
               <dd>
                 {copyMode === "separate" ? "Separate" : `In image: "${copy}"`}
@@ -1352,7 +1499,7 @@ export function AdGenerator({ brand }: { brand: Brand }) {
               <dd>{landingPages.map((lp) => lp.title).join(", ") || "None"}</dd>
               <dt className="text-zinc-500">Variations</dt>
               <dd>
-                {targetAds} per reference · {totalAds} ads across {batches.length} group
+                {targetAds} per reference · {totalAds} ads across {batches.length} reference group
                 {batches.length === 1 ? "" : "s"}
               </dd>
             </dl>
@@ -1360,11 +1507,15 @@ export function AdGenerator({ brand }: { brand: Brand }) {
             <div className="mt-6 flex flex-col gap-3">
               {batches.map((b) => (
                 <div key={b.id} className="rounded-lg bg-zinc-50 p-3 text-sm">
-                  <p className="mb-2 font-medium">
+                  <p className="font-medium">
                     {batchLabel(b)}{" "}
                     <span className="font-normal text-zinc-500">
                       · {b.count} ads
                     </span>
+                  </p>
+                  <p className="mb-2 text-zinc-500">
+                    Keywords:{" "}
+                    {groups.find((g) => g.id === b.id)?.description.trim() || "None"}
                   </p>
                   <div className="flex flex-col gap-1.5">
                     {b.jobs.map((j) => (

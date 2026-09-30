@@ -41,12 +41,20 @@ export type BriefReference = {
   metrics: ReferenceMetrics;
 };
 
+export type LandingPageSection = {
+  heading: string;
+  /** Copy that follows this heading, before the next one. */
+  text: string;
+};
+
 export type LandingPage = {
+  /** Final URL of the landing page. */
   fileName: string;
   title: string;
   description: string;
   headings: string[];
   text: string;
+  sections?: LandingPageSection[];
 };
 
 export type AdBrief = {
@@ -54,13 +62,14 @@ export type AdBrief = {
   products: { id: string; sku: string; name: string }[];
   productVisibility: ProductVisibility;
   dimensions: Dimension[];
+  /** Descriptions from every group, split on semicolons. Generation uses each group's own description. */
   keywords: string[];
   /** Variations generated for each reference image, in every group. */
   targetAds: number;
   copyMode: CopyMode;
   copy: string;
   landingPages: LandingPage[];
-  referenceGroups: { id: string; name?: string }[];
+  referenceGroups: { id: string; name?: string; description?: string; keywords?: string[] }[];
   references: BriefReference[];
 };
 
@@ -77,7 +86,7 @@ export type GeneratedAd = {
 
 /** Cap on images per run (ads × dimensions). */
 export const MAX_TOTAL_ADS = 24;
-/** Variations the input slider can request for each reference image. */
+/** Variations that can be requested for each reference image. */
 export const MIN_VARIATIONS_PER_REFERENCE = 1;
-export const MAX_VARIATIONS_PER_REFERENCE = 4;
+export const MAX_VARIATIONS_PER_REFERENCE = 10;
 export const MAX_REFERENCE_GROUPS = 8;

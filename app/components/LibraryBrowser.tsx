@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   LIBRARY_PLATFORMS,
   LIBRARY_SORTS,
@@ -23,11 +23,6 @@ type Filters = { platform: string; sort: LibrarySort; liveOnly: boolean; minRunD
 const INLINE_CONTROL = "rounded-lg border border-zinc-300 bg-white py-1.5 text-sm outline-none focus:border-brand";
 const INLINE_SELECT = `${INLINE_CONTROL} pr-10 pl-3`;
 const INLINE_INPUT = `${INLINE_CONTROL} px-2`;
-
-const SOURCE_LABELS: Record<LibrarySource, string> = {
-  apify: "Meta Ad Library via Apify · filters and sorting are free after each search",
-  sample: "Sample data (no APIFY_TOKEN)",
-};
 
 const dateFormat = new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric" });
 
@@ -62,6 +57,13 @@ export function LibraryBrowser({
 }) {
   const [mode, setMode] = useState<SearchMode>("keyword");
   const [q, setQ] = useState(suggestedQuery);
+  const appliedSuggestion = useRef(suggestedQuery);
+  useEffect(() => {
+    setQ((current) =>
+      current.trim() === "" || current === appliedSuggestion.current ? suggestedQuery : current,
+    );
+    appliedSuggestion.current = suggestedQuery;
+  }, [suggestedQuery]);
   const [brandQuery, setBrandQuery] = useState("");
   const [brands, setBrands] = useState<LibraryBrand[] | null>(null);
   const [brand, setBrand] = useState<LibraryBrand | null>(null);
@@ -89,7 +91,7 @@ export function LibraryBrowser({
   const [pending, setPending] = useState<string[]>([]);
 
   const groupCount = groupNames.length;
-  const groupLabel = (i: number) => groupNames[i]?.trim() || `Group ${i + 1}`;
+  const groupLabel = (i: number) => groupNames[i]?.trim() || `Reference group ${i + 1}`;
   const targetGroup = Math.min(groupIndex, groupCount - 1);
 
   async function loadAds({
@@ -192,14 +194,7 @@ export function LibraryBrowser({
 
   return (
     <section className="card">
-      <div className="mb-1 flex items-center justify-between">
-        <h2 className="section-title mb-0">Reference library</h2>
-        {source && (
-          <span className="text-xs text-zinc-400">
-            {SOURCE_LABELS[source]}
-          </span>
-        )}
-      </div>
+      <h2 className="section-title mb-0">Reference library</h2>
       <p className="mb-5 text-sm text-zinc-500">
         Static ads from other brands, ranked by public signals like run time, active status, and platform reach (not
         CTR or CVR). Select the ones you want and add them to a group.
