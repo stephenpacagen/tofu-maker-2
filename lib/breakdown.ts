@@ -94,7 +94,7 @@ function sectionsFromText(text: string, headings: string[]) {
     .filter((section) => section.text.length > 0);
 }
 
-function summarizeLandingPage(lp: LandingPage): LandingPageSummary {
+export function summarizeLandingPage(lp: LandingPage): LandingPageSummary {
   const title = lp.title.trim();
   const stored = lp.sections?.filter((section) => section.heading.trim() && section.text.trim()) ?? [];
   const sections = (stored.length > 0 ? stored : sectionsFromText(lp.text, lp.headings)).filter((section) =>

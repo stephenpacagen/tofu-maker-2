@@ -15,5 +15,5 @@ export function getGenerator(model: GenerationModelId): AdGenerator {
   return GENERATORS[providerOf(model)];
 }
 
-export { buildPrompt, buildResizePrompt } from "./prompt";
+export { buildPrompt, buildRegeneratePrompt, buildResizePrompt, referenceCoversBoth } from "./prompt";
 export type { AdGenerator, GenerationJob, GenerationOutput, ImageInput } from "./types";

@@ -13,6 +13,10 @@ export type GenerationJob = {
   formatImage?: ImageInput;
   styleImage?: ImageInput;
   productImages: ImageInput[];
+  /** The finished ad being revised. Sent after the original references and product photos. */
+  revisionImage?: ImageInput;
+  /** Extra images supplied for a revision, sent after the current ad. */
+  extraImages?: ImageInput[];
   dimension: Dimension;
   count: number;
   prompt: string;
@@ -33,8 +37,12 @@ export interface AdGenerator {
 }
 
 /** Order in which images are sent to the model; the prompt describes them in this order. */
-export function orderedImages(job: Pick<GenerationJob, "formatImage" | "styleImage" | "productImages">) {
-  return [job.formatImage, job.styleImage, ...job.productImages].filter((img): img is ImageInput => !!img);
+export function orderedImages(
+  job: Pick<GenerationJob, "formatImage" | "styleImage" | "productImages" | "revisionImage" | "extraImages">,
+) {
+  return [job.formatImage, job.styleImage, ...job.productImages, job.revisionImage, ...(job.extraImages ?? [])].filter(
+    (img): img is ImageInput => !!img,
+  );
 }
 
 const PROVIDER_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"];

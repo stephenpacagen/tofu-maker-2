@@ -27,8 +27,14 @@ export function splitEvenly(total: number, n: number): number[] {
 /**
  * Every reference image in the group gets `variations` outputs. When a group
  * has both style and format references, each style/format pairing gets that many.
+ * A group with a single image uses that image for both style and layout.
  */
 function planGroupJobs(refs: BriefReference[], variations: number): BatchJob[] {
+  if (refs.length === 1) {
+    const only = refs[0];
+    return [{ style: only, format: only, count: variations }];
+  }
+
   const styles = refs.filter((r) => r.role === "style");
   const formats = refs.filter((r) => r.role === "format");
 

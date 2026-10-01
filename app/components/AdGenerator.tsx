@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { countAds, planBatches, splitEvenly, type Batch } from "@/lib/batches";
+import { zipFolder } from "@/lib/zip-folder";
 import type { Brand } from "@/lib/brands";
 import { toInputBreakdown, toReferenceBreakdown } from "@/lib/breakdown";
 import {
@@ -73,7 +74,13 @@ const REFERENCE_SOURCES: {
   },
 ];
 
-function ProgressBar({ stage }: { stage: Stage }) {
+function ProgressBar({
+  stage,
+  onSelect,
+}: {
+  stage: Stage;
+  onSelect: (stage: Stage) => void;
+}) {
   const current = STAGES.findIndex((s) => s.id === stage);
   const fill = (current / (STAGES.length - 1)) * 100;
 
@@ -89,22 +96,44 @@ function ProgressBar({ stage }: { stage: Stage }) {
           {STAGES.map((s, i) => {
             const done = i < current;
             const active = i === current;
+            const clickable = stage !== "results" && done;
+            const marker = (
+              <span
+                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 text-xs font-semibold transition-colors ${
+                  done || active
+                    ? "border-brand bg-brand text-white"
+                    : "border-zinc-300 bg-white text-zinc-400"
+                }`}
+              >
+                {done ? "✓" : i + 1}
+              </span>
+            );
+            const label = (
+              <span
+                className={`text-xs whitespace-nowrap ${
+                  active ? "font-medium text-zinc-900" : "text-zinc-500"
+                } ${clickable ? "underline-offset-2 group-hover:underline" : ""}`}
+              >
+                {s.label}
+              </span>
+            );
             return (
-              <li key={s.id} className="flex w-0 flex-col items-center gap-2">
-                <span
-                  className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 text-xs font-semibold transition-colors ${
-                    done || active
-                      ? "border-brand bg-brand text-white"
-                      : "border-zinc-300 bg-white text-zinc-400"
-                  }`}
-                >
-                  {done ? "✓" : i + 1}
-                </span>
-                <span
-                  className={`text-xs whitespace-nowrap ${active ? "font-medium text-zinc-900" : "text-zinc-500"}`}
-                >
-                  {s.label}
-                </span>
+              <li key={s.id} className="flex w-0 flex-col items-center">
+                {clickable ? (
+                  <button
+                    type="button"
+                    onClick={() => onSelect(s.id)}
+                    className="group flex cursor-pointer flex-col items-center gap-2"
+                  >
+                    {marker}
+                    {label}
+                  </button>
+                ) : (
+                  <div className="flex flex-col items-center gap-2">
+                    {marker}
+                    {label}
+                  </div>
+                )}
               </li>
             );
           })}
@@ -120,74 +149,315 @@ const ASPECT_CLASSES: Record<Dimension, string> = {
   "1x1": "aspect-square",
 };
 
+function variationKey(
+  ad: Pick<GeneratedAd, "batchId" | "styleRefId" | "formatRefId" | "variation">,
+) {
+  return `${ad.batchId}-${ad.styleRefId ?? "none"}-${ad.formatRefId ?? "none"}-${ad.variation}`;
+}
+
+type ImageJobResponse =
+  | { imageUrl: string; prompt: string; failures: string[] }
+  | { error: string };
+
+async function postImageJob(
+  path: string,
+  fields: Record<string, string>,
+  files: { name: string; file: File }[],
+): Promise<ImageJobResponse> {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(fields)) form.append(key, value);
+  for (const item of files) form.append(item.name, item.file);
+  const res = await fetch(path, { method: "POST", body: form });
+  return (await res.json().catch(() => ({
+    error: `Request failed (${res.status} ${res.statusText})`,
+  }))) as ImageJobResponse;
+}
+
 function ResultFigure({
   ad,
   selected,
   downloadName,
+  loading,
   onOpen,
   onToggle,
+  regenerate,
 }: {
   ad: GeneratedAd;
   selected: boolean;
   downloadName: string;
+  loading?: boolean;
   onOpen: () => void;
   onToggle: () => void;
+  regenerate?: {
+    error?: string;
+    hasOriginal: boolean;
+    showingOriginal: boolean;
+    onOpenForm: () => void;
+    onToggleOriginal: () => void;
+  };
 }) {
   return (
-    <figure className="flex flex-col gap-1">
-      <p className="text-left text-xs font-semibold text-zinc-800">#{ad.variation}</p>
+    <figure className="flex w-full min-w-0 flex-col gap-1">
+      <p className="text-left text-xs font-semibold text-zinc-800">
+        #{ad.variation}
+      </p>
       <div className="relative">
-        <button
-          type="button"
-          onClick={onOpen}
-          aria-label={`View variation ${ad.variation} full screen`}
-          aria-pressed={selected}
-          className={`block w-full cursor-zoom-in rounded-lg text-left ring-2 ring-offset-2 ${
-            selected ? "ring-brand" : "ring-transparent"
-          }`}
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element -- generated data URL */}
-          <img
-            src={ad.imageUrl}
-            alt={`${ad.dimension} variation ${ad.variation}`}
-            title={ad.prompt}
-            className={`${ASPECT_CLASSES[ad.dimension]} w-full rounded-lg bg-zinc-100 object-cover`}
-          />
-        </button>
-        <label className="absolute top-2 left-2 z-10 flex size-7 cursor-pointer items-center justify-center">
-          <input
-            type="checkbox"
-            checked={selected}
-            onChange={onToggle}
-            aria-label={`Select variation ${ad.variation}`}
-            className="peer sr-only"
-          />
-          <span
-            aria-hidden
-            className="flex size-7 items-center justify-center rounded-lg border-2 border-white/80 bg-white/95 text-white shadow-md transition peer-checked:border-brand peer-checked:bg-brand peer-focus-visible:ring-2 peer-focus-visible:ring-brand/40 peer-hover:scale-105"
+        {loading ? (
+          <div
+            className={`${ASPECT_CLASSES[ad.dimension]} flex w-full animate-pulse items-center justify-center rounded-lg bg-zinc-100 text-xs text-zinc-400`}
           >
-            <svg
-              viewBox="0 0 16 16"
-              className="size-4"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.4"
-              strokeLinecap="round"
-              strokeLinejoin="round"
+            Regenerating…
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={onOpen}
+            aria-label={`View variation ${ad.variation} full screen`}
+            aria-pressed={selected}
+            className={`block w-full min-w-0 cursor-zoom-in rounded-lg text-left ring-2 ring-offset-2 ${
+              selected ? "ring-brand" : "ring-transparent"
+            }`}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element -- generated data URL */}
+            <img
+              src={ad.imageUrl}
+              alt={`${ad.dimension} variation ${ad.variation}`}
+              title={ad.prompt}
+              className="h-auto w-full max-w-full rounded-lg bg-zinc-100 object-contain"
+            />
+          </button>
+        )}
+        {!loading && (
+          <label className="absolute top-2 left-2 z-10 flex size-7 cursor-pointer items-center justify-center">
+            <input
+              type="checkbox"
+              checked={selected}
+              onChange={onToggle}
+              aria-label={`Select variation ${ad.variation}`}
+              className="peer sr-only"
+            />
+            <span
+              aria-hidden
+              className="flex size-7 items-center justify-center rounded-lg border-2 border-white/80 bg-white/95 text-white shadow-md transition peer-checked:border-brand peer-checked:bg-brand peer-focus-visible:ring-2 peer-focus-visible:ring-brand/40 peer-hover:scale-105"
             >
-              <path d="M3.5 8.5 6.5 11.5 12.5 4.5" className={selected ? "" : "opacity-0"} />
-            </svg>
-          </span>
-        </label>
+              <svg
+                viewBox="0 0 16 16"
+                className="size-4"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path
+                  d="M3.5 8.5 6.5 11.5 12.5 4.5"
+                  className={selected ? "" : "opacity-0"}
+                />
+              </svg>
+            </span>
+          </label>
+        )}
       </div>
-      <a
-        href={ad.imageUrl}
-        download={downloadName}
-        className="mx-auto mt-1 inline-flex items-center justify-center rounded-full border border-zinc-300 bg-white px-4 py-1.5 text-xs font-medium text-zinc-800 shadow-sm transition hover:border-brand hover:text-brand"
-      >
-        Download
-      </a>
+      {loading ? (
+        <span className="mx-auto mt-1 inline-flex items-center justify-center rounded-full border border-zinc-200 px-4 py-1.5 text-xs font-medium text-zinc-400">
+          Download
+        </span>
+      ) : (
+        <a
+          href={ad.imageUrl}
+          download={downloadName}
+          className="mx-auto mt-1 inline-flex max-w-full items-center justify-center rounded-full border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-800 shadow-sm transition hover:border-brand hover:text-brand"
+        >
+          Download
+        </a>
+      )}
+      {regenerate && (
+        <div className="mt-1 flex flex-col gap-1.5">
+          <button
+            type="button"
+            onClick={regenerate.onOpenForm}
+            disabled={loading}
+            className="mx-auto inline-flex max-w-full items-center justify-center rounded-full border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-800 shadow-sm transition hover:border-brand hover:text-brand disabled:cursor-default disabled:border-zinc-200 disabled:text-zinc-400 disabled:hover:text-zinc-400"
+          >
+            Regenerate
+          </button>
+          {regenerate.error && (
+            <p className="text-center text-xs text-rose-600">
+              {regenerate.error}
+            </p>
+          )}
+          {regenerate.hasOriginal && !loading && (
+            <button
+              type="button"
+              onClick={regenerate.onToggleOriginal}
+              className="mx-auto text-xs font-medium text-zinc-600 underline decoration-zinc-300 underline-offset-2 hover:text-brand"
+            >
+              {regenerate.showingOriginal
+                ? "View regenerated"
+                : "View original"}
+            </button>
+          )}
+        </div>
+      )}
     </figure>
+  );
+}
+
+function RegenerateDialog({
+  imageUrl,
+  variation,
+  dimension,
+  instruction,
+  showOthers,
+  alsoOthers,
+  onInstruction,
+  onAlsoOthers,
+  onExtra,
+  onCancel,
+  onSubmit,
+}: {
+  imageUrl: string;
+  variation: number;
+  dimension: Dimension;
+  instruction: string;
+  showOthers: boolean;
+  alsoOthers: boolean;
+  onInstruction: (value: string) => void;
+  onAlsoOthers: (checked: boolean) => void;
+  onExtra: (file: File | null) => void;
+  onCancel: () => void;
+  onSubmit: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel]);
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+      onClick={onCancel}
+    >
+      <form
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Regenerate variation ${variation}`}
+        className="flex max-h-[90vh] w-full max-w-lg flex-col gap-4 overflow-y-auto rounded-2xl bg-white p-5 shadow-xl"
+        onClick={(event) => event.stopPropagation()}
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSubmit();
+        }}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element -- generated data URL */}
+        <img
+          src={imageUrl}
+          alt={`${dimension} variation ${variation}`}
+          className="mx-auto max-h-[50vh] w-auto max-w-full rounded-lg bg-zinc-100 object-contain"
+        />
+        <label className="flex flex-col gap-1 text-sm text-zinc-700">
+          Further instructions
+          <textarea
+            value={instruction}
+            onChange={(event) => onInstruction(event.target.value)}
+            rows={4}
+            placeholder="What should change in this image?"
+            aria-label={`Instructions for variation ${variation}`}
+            className="w-full resize-y rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none focus:border-brand"
+            autoFocus
+          />
+        </label>
+        {showOthers && (
+          <label className="flex items-start gap-2 text-sm text-zinc-700">
+            <input
+              type="checkbox"
+              checked={alsoOthers}
+              onChange={(event) => onAlsoOthers(event.target.checked)}
+              className="mt-0.5"
+            />
+            Also regenerate the other formats
+          </label>
+        )}
+        <label className="flex flex-col gap-1 text-sm text-zinc-700">
+          Additional image
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            onChange={(event) => onExtra(event.target.files?.[0] ?? null)}
+            className="block w-full text-sm text-zinc-600 file:mr-3 file:rounded-full file:border file:border-zinc-300 file:bg-white file:px-3 file:py-1 file:text-sm"
+          />
+        </label>
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onCancel} className="btn-secondary">
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={!instruction.trim()}
+            className="btn-primary"
+          >
+            Regenerate
+          </button>
+        </div>
+      </form>
+    </div>,
+    document.body,
+  );
+}
+
+function StartNewAdSetDialog({
+  onCancel,
+  onConfirm,
+}: {
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel]);
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+      onClick={onCancel}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="new-ad-set-title"
+        className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h2 id="new-ad-set-title" className="text-lg font-semibold text-zinc-900">
+          Start a new ad set?
+        </h2>
+        <p className="mt-2 text-sm text-zinc-600">
+          Are you sure you want to start a new one? The generations you&apos;ve
+          made here will disappear forever. Make sure you download what you want
+          to keep!
+        </p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" onClick={onCancel} className="btn-secondary">
+            Go back
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-700"
+          >
+            Yes, I&apos;m Sure!
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -252,6 +522,23 @@ async function dataUrlToFile(dataUrl: string, name: string) {
   return new File([blob], name, { type });
 }
 
+function saveDownload(href: string, name: string) {
+  const a = document.createElement("a");
+  a.href = href;
+  a.download = name;
+  a.click();
+}
+
+function uniqueDownloadName(name: string, used: Map<string, number>) {
+  const count = used.get(name) ?? 0;
+  used.set(name, count + 1);
+  if (count === 0) return name;
+  const dot = name.lastIndexOf(".");
+  const stem = dot === -1 ? name : name.slice(0, dot);
+  const ext = dot === -1 ? "" : name.slice(dot);
+  return `${stem}-${count + 1}${ext}`;
+}
+
 /** Runs tasks with at most `limit` in flight. */
 async function runPool(tasks: (() => Promise<void>)[], limit: number) {
   const queue = [...tasks];
@@ -260,6 +547,81 @@ async function runPool(tasks: (() => Promise<void>)[], limit: number) {
       while (queue.length) await queue.shift()!();
     }),
   );
+}
+
+type ThumbDirection = "left" | "right" | "up" | "down";
+
+/** Moves one cell in the thumbnail grid: columns are variations, rows are formats. */
+function thumbnailNeighbor(ads: GeneratedAd[], from: number, direction: ThumbDirection): number {
+  const groups: {
+    id: string;
+    rows: Dimension[];
+    cols: number[];
+    at: Map<string, number>;
+  }[] = [];
+  ads.forEach((ad, adIndex) => {
+    let group = groups[groups.length - 1];
+    if (!group || group.id !== ad.batchId) {
+      group = { id: ad.batchId, rows: [], cols: [], at: new Map() };
+      groups.push(group);
+    }
+    if (!group.rows.includes(ad.dimension)) group.rows.push(ad.dimension);
+    if (!group.cols.includes(ad.variation)) group.cols.push(ad.variation);
+    group.at.set(`${ad.dimension}:${ad.variation}`, adIndex);
+  });
+
+  let gi = groups.findIndex((group) => [...group.at.values()].includes(from));
+  const current = ads[from];
+  if (!current || gi < 0) return from;
+  let ri = groups[gi].rows.indexOf(current.dimension);
+  let ci = groups[gi].cols.indexOf(current.variation);
+  const horizontal = direction === "left" || direction === "right";
+  const delta = direction === "right" || direction === "down" ? 1 : -1;
+
+  for (let guard = 0; guard < ads.length; guard++) {
+    if (horizontal) ci += delta;
+    else ri += delta;
+
+    let placed = false;
+    while (!placed) {
+      if (gi < 0 || gi >= groups.length) return from;
+      const group = groups[gi];
+      if (ci < 0) {
+        gi -= 1;
+        if (gi < 0) return from;
+        ci = groups[gi].cols.length - 1;
+        ri = Math.min(Math.max(ri, 0), groups[gi].rows.length - 1);
+        continue;
+      }
+      if (ci >= group.cols.length) {
+        gi += 1;
+        if (gi >= groups.length) return from;
+        ci = 0;
+        ri = Math.min(Math.max(ri, 0), groups[gi].rows.length - 1);
+        continue;
+      }
+      if (ri < 0) {
+        gi -= 1;
+        if (gi < 0) return from;
+        ri = groups[gi].rows.length - 1;
+        ci = Math.min(Math.max(ci, 0), groups[gi].cols.length - 1);
+        continue;
+      }
+      if (ri >= group.rows.length) {
+        gi += 1;
+        if (gi >= groups.length) return from;
+        ri = 0;
+        ci = Math.min(Math.max(ci, 0), groups[gi].cols.length - 1);
+        continue;
+      }
+      placed = true;
+    }
+
+    const group = groups[gi];
+    const next = group.at.get(`${group.rows[ri]}:${group.cols[ci]}`);
+    if (next !== undefined) return next;
+  }
+  return from;
 }
 
 /** Full-screen viewer for finished generations. Scroll, swipe, or use the arrows to move between them. */
@@ -279,6 +641,7 @@ function GenerationLightbox({
   onClose: () => void;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
+  const activeThumb = useRef<HTMLButtonElement>(null);
   const startIndex = Math.max(
     0,
     ads.findIndex((ad) => ad.id === startId),
@@ -295,21 +658,47 @@ function GenerationLightbox({
   }, [startIndex]);
 
   useEffect(() => {
+    activeThumb.current?.scrollIntoView({ block: "nearest" });
+  }, [index]);
+
+  useEffect(() => {
     const el = scroller.current;
     if (!el) return;
+    const node = el;
 
     function step(delta: number) {
-      const width = el.clientWidth;
+      const width = node.clientWidth;
       if (!width) return;
-      const current = Math.round(el.scrollLeft / width);
+      const current = Math.round(node.scrollLeft / width);
       const next = Math.min(ads.length - 1, Math.max(0, current + delta));
-      el.scrollTo({ left: next * width, behavior: "smooth" });
+      node.scrollLeft = next * width;
     }
 
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-      if (e.key === "ArrowLeft") step(-1);
-      if (e.key === "ArrowRight") step(1);
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      const direction: ThumbDirection | null =
+        e.key === "ArrowLeft"
+          ? "left"
+          : e.key === "ArrowRight"
+            ? "right"
+            : e.key === "ArrowUp"
+              ? "up"
+              : e.key === "ArrowDown"
+                ? "down"
+                : null;
+      if (!direction) return;
+      e.preventDefault();
+      const width = node.clientWidth;
+      if (!width) return;
+      const current = Math.round(node.scrollLeft / width);
+      const next = thumbnailNeighbor(ads, current, direction);
+      if (next !== current) {
+        node.scrollLeft = next * width;
+        setIndex(next);
+      }
     }
 
     let wheelLock = false;
@@ -334,17 +723,43 @@ function GenerationLightbox({
       el.removeEventListener("wheel", onWheel);
       document.body.style.overflow = previousOverflow;
     };
-  }, [ads.length, onClose]);
+  }, [ads, onClose]);
 
   if (typeof document === "undefined") return null;
+
+  function scrollToIndex(next: number) {
+    const el = scroller.current;
+    const width = el?.clientWidth ?? 0;
+    if (!el || !width) return;
+    const clamped = Math.min(ads.length - 1, Math.max(0, next));
+    el.scrollLeft = clamped * width;
+    setIndex(clamped);
+  }
 
   function stepFromButton(delta: number) {
     const el = scroller.current;
     const width = el?.clientWidth ?? 0;
     if (!el || !width) return;
     const current = Math.round(el.scrollLeft / width);
-    const next = Math.min(ads.length - 1, Math.max(0, current + delta));
-    el.scrollTo({ left: next * width, behavior: "smooth" });
+    scrollToIndex(current + delta);
+  }
+
+  const thumbnailGroups: {
+    id: string;
+    name: string;
+    items: { ad: GeneratedAd; index: number }[];
+  }[] = [];
+  for (let i = 0; i < ads.length; i++) {
+    const ad = ads[i];
+    const last = thumbnailGroups[thumbnailGroups.length - 1];
+    if (!last || last.id !== ad.batchId) {
+      thumbnailGroups.push({
+        id: ad.batchId,
+        name: groupNames[ad.batchId] ?? "Reference group",
+        items: [],
+      });
+    }
+    thumbnailGroups[thumbnailGroups.length - 1].items.push({ ad, index: i });
   }
 
   return createPortal(
@@ -352,8 +767,162 @@ function GenerationLightbox({
       role="dialog"
       aria-modal="true"
       aria-label="Generated ads"
-      className="fixed inset-0 z-50 bg-black/90"
+      className="fixed inset-0 z-50 flex bg-black/90"
     >
+      <div className="relative min-w-0 flex-1">
+        {ads[index] && (
+          <div className="pointer-events-none absolute top-6 left-6 z-10 max-w-[70%] text-left text-white">
+            <p className="text-3xl font-semibold tracking-tight sm:text-4xl">
+              {groupNames[ads[index].batchId] ?? "Reference group"}
+            </p>
+            <p className="mt-1 text-2xl font-medium sm:text-3xl">
+              #{ads[index].variation} · {ads[index].dimension}
+              {ads.length > 1 && (
+                <span className="text-white/70">
+                  {" "}
+                  · {index + 1} / {ads.length}
+                </span>
+              )}
+            </p>
+          </div>
+        )}
+        {ads.length > 1 && (
+          <button
+            type="button"
+            aria-label="Previous image"
+            disabled={index === 0}
+            onClick={() => stepFromButton(-1)}
+            className="absolute top-1/2 left-3 z-10 flex size-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-2xl text-white hover:bg-white/20 disabled:opacity-30 sm:left-6"
+          >
+            ‹
+          </button>
+        )}
+        <div
+          ref={scroller}
+          className="flex h-full w-full snap-x snap-mandatory overflow-x-auto overscroll-x-contain"
+          onScroll={(e) => {
+            const width = e.currentTarget.clientWidth;
+            if (!width) return;
+            setIndex(Math.round(e.currentTarget.scrollLeft / width));
+          }}
+        >
+          {ads.map((ad, i) => {
+            const selected = isSelected(ad);
+            return (
+              <div
+                key={ad.id}
+                className="flex h-full shrink-0 grow-0 basis-full snap-center flex-col items-center justify-center px-16 py-8"
+                onClick={onClose}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element -- generated data URL */}
+                <img
+                  src={ad.imageUrl}
+                  alt={`${ad.dimension} variation ${ad.variation}, image ${i + 1} of ${ads.length}`}
+                  className="max-h-[calc(100dvh-11rem)] max-w-full object-contain"
+                  onClick={(e) => e.stopPropagation()}
+                />
+                <div
+                  className="mt-4 flex flex-col items-center gap-3"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <label
+                    className={`flex cursor-pointer items-center gap-3 rounded-xl px-5 py-3 text-base font-semibold shadow-lg ${
+                      selected
+                        ? "bg-white text-zinc-900"
+                        : "bg-zinc-800 text-white ring-2 ring-white"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={() => onToggleSelected(ad)}
+                      className="size-5 accent-brand"
+                    />
+                    {selected ? "Selected for download" : "Not selected"}
+                  </label>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {ads.length > 1 && (
+          <button
+            type="button"
+            aria-label="Next image"
+            disabled={index === ads.length - 1}
+            onClick={() => stepFromButton(1)}
+            className="absolute top-1/2 right-3 z-10 flex size-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-2xl text-white hover:bg-white/20 disabled:opacity-30"
+          >
+            ›
+          </button>
+        )}
+      </div>
+      <aside className="flex h-full w-[min(46vw,34rem)] shrink-0 flex-col gap-3 overflow-y-auto border-l border-white/15 bg-black/50 p-3 pt-16">
+        {thumbnailGroups.map((group) => {
+          const rowDimensions: Dimension[] = [];
+          const columnVariations: number[] = [];
+          for (const { ad } of group.items) {
+            if (!rowDimensions.includes(ad.dimension)) rowDimensions.push(ad.dimension);
+            if (!columnVariations.includes(ad.variation)) columnVariations.push(ad.variation);
+          }
+          return (
+            <section
+              key={group.id}
+              className="rounded-lg border border-white/30 p-2"
+            >
+              <p className="mb-2 text-xs font-semibold text-white">{group.name}</p>
+              <div className="flex w-full flex-col gap-3">
+                {rowDimensions.map((dimension) => (
+                  <div key={dimension} className="w-full">
+                    <p className="mb-1 text-[11px] font-semibold text-white">{dimension}</p>
+                    <div
+                      className="grid w-full gap-1.5"
+                      style={{
+                        gridTemplateColumns: `repeat(${Math.max(columnVariations.length, 1)}, minmax(0, 1fr))`,
+                      }}
+                    >
+                      {columnVariations.map((variation) => {
+                        const item = group.items.find(
+                          (entry) =>
+                            entry.ad.dimension === dimension && entry.ad.variation === variation,
+                        );
+                        if (!item) return <div key={`${dimension}-${variation}`} />;
+                        const { ad, index: adIndex } = item;
+                        return (
+                          <button
+                            key={ad.id}
+                            type="button"
+                            aria-current={adIndex === index}
+                            aria-label={`${group.name} variation ${ad.variation} ${ad.dimension}`}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => scrollToIndex(adIndex)}
+                            ref={adIndex === index ? activeThumb : undefined}
+                            className={`w-full min-w-0 overflow-hidden rounded-md text-left outline-none ${
+                              adIndex === index
+                                ? "ring-2 ring-white ring-offset-1 ring-offset-black"
+                                : ""
+                            }`}
+                          >
+                            <span className="block px-0.5 text-[10px] font-semibold text-white">
+                              #{ad.variation}
+                            </span>
+                            {/* eslint-disable-next-line @next/next/no-img-element -- generated data URL */}
+                            <img
+                              src={ad.imageUrl}
+                              alt=""
+                              className="h-auto w-full bg-zinc-900 object-contain"
+                            />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          );
+        })}
+      </aside>
       <button
         type="button"
         onClick={onClose}
@@ -362,85 +931,6 @@ function GenerationLightbox({
       >
         Close
       </button>
-      {ads.length > 1 && (
-        <button
-          type="button"
-          aria-label="Previous image"
-          disabled={index === 0}
-          onClick={() => stepFromButton(-1)}
-          className="absolute top-1/2 left-3 z-10 flex size-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-2xl text-white hover:bg-white/20 disabled:opacity-30 sm:left-6"
-        >
-          ‹
-        </button>
-      )}
-      <div
-        ref={scroller}
-        className="flex h-full w-full snap-x snap-mandatory overflow-x-auto overscroll-x-contain"
-        onScroll={(e) => {
-          const width = e.currentTarget.clientWidth;
-          if (!width) return;
-          setIndex(Math.round(e.currentTarget.scrollLeft / width));
-        }}
-      >
-        {ads.map((ad, i) => {
-          const selected = isSelected(ad);
-          return (
-            <div
-              key={ad.id}
-              className="flex h-full shrink-0 grow-0 basis-full snap-center flex-col items-center justify-center px-16 py-8"
-              onClick={onClose}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element -- generated data URL */}
-              <img
-                src={ad.imageUrl}
-                alt={`${ad.dimension} variation ${ad.variation}, image ${i + 1} of ${ads.length}`}
-                className="max-h-[calc(100dvh-11rem)] max-w-full object-contain"
-                onClick={(e) => e.stopPropagation()}
-              />
-              <div
-                className="mt-4 flex flex-col items-center gap-3"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <p className="text-sm font-medium text-white">
-                  {groupNames[ad.batchId] ?? "Reference group"} · #{ad.variation} · {ad.dimension}
-                  {ads.length > 1 && (
-                    <span className="text-white/70">
-                      {" "}
-                      · {i + 1} / {ads.length}
-                    </span>
-                  )}
-                </p>
-                <label
-                  className={`flex cursor-pointer items-center gap-3 rounded-xl px-5 py-3 text-base font-semibold shadow-lg ${
-                    selected
-                      ? "bg-white text-zinc-900"
-                      : "bg-zinc-800 text-white ring-2 ring-white"
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selected}
-                    onChange={() => onToggleSelected(ad)}
-                    className="size-5 accent-brand"
-                  />
-                  {selected ? "Selected for download" : "Not selected"}
-                </label>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      {ads.length > 1 && (
-        <button
-          type="button"
-          aria-label="Next image"
-          disabled={index === ads.length - 1}
-          onClick={() => stepFromButton(1)}
-          className="absolute top-1/2 right-3 z-10 flex size-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-2xl text-white hover:bg-white/20 disabled:opacity-30 sm:right-6"
-        >
-          ›
-        </button>
-      )}
     </div>,
     document.body,
   );
@@ -553,8 +1043,30 @@ export function AdGenerator({ brand }: { brand: Brand }) {
   const [error, setError] = useState<string | null>(null);
   const [ads, setAds] = useState<GeneratedAd[]>([]);
   const [openAdId, setOpenAdId] = useState<string | null>(null);
-  // Image ids the user has turned off. Anything not listed stays selected, including images that finish later.
-  const [deselectedIds, setDeselectedIds] = useState<Set<string>>(new Set());
+  const [confirmNewAdSet, setConfirmNewAdSet] = useState(false);
+  // Images start unselected. Only ids in this set are included in downloads.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [originals, setOriginals] = useState<
+    Record<string, { imageUrl: string; prompt: string }>
+  >({});
+  const [showingOriginal, setShowingOriginal] = useState<Set<string>>(
+    new Set(),
+  );
+  const [regeneratingKeys, setRegeneratingKeys] = useState<Set<string>>(
+    new Set(),
+  );
+  const [regenEditor, setRegenEditor] = useState<{
+    key: string;
+    dimension: Dimension;
+    imageUrl: string;
+    variation: number;
+  } | null>(null);
+  const [regenInstruction, setRegenInstruction] = useState("");
+  const [regenOthers, setRegenOthers] = useState(true);
+  const [regenExtra, setRegenExtra] = useState<File | null>(null);
+  const [regenErrors, setRegenErrors] = useState<Record<string, string>>({});
+  const adsRef = useRef<GeneratedAd[]>([]);
+  adsRef.current = ads;
   const [resultBatches, setResultBatches] = useState<Batch[]>([]);
   const [options, setOptions] = useState<GenerationOptions>(
     DEFAULT_GENERATION_OPTIONS,
@@ -574,11 +1086,13 @@ export function AdGenerator({ brand }: { brand: Brand }) {
     products: selectedProducts.map(({ id, sku, name }) => ({ id, sku, name })),
     productVisibility,
     dimensions,
-    keywords: uniqueKeywords(groups.flatMap((g) => splitAttributes(g.description))),
+    keywords: uniqueKeywords(
+      groups.flatMap((g) => splitAttributes(g.description)),
+    ),
     targetAds,
     copyMode,
     copy,
-    landingPages,
+    landingPages: copyMode === "in-image" ? landingPages : [],
     referenceGroups: groups.map(({ id, name, description }) => ({
       id,
       name,
@@ -606,10 +1120,14 @@ export function AdGenerator({ brand }: { brand: Brand }) {
 
   const emptyGroups = groups
     .map((g, i) =>
-      references.some((r) => r.groupId === g.id) ? null : g.name.trim() || `Reference group ${i + 1}`,
+      references.some((r) => r.groupId === g.id)
+        ? null
+        : g.name.trim() || `Reference group ${i + 1}`,
     )
     .filter((n) => n !== null);
-  const variationsNumber = /^\d+$/.test(variationsText) ? Number(variationsText) : null;
+  const variationsNumber = /^\d+$/.test(variationsText)
+    ? Number(variationsText)
+    : null;
   const variationsOutOfRange =
     variationsNumber !== null &&
     (variationsNumber < MIN_VARIATIONS_PER_REFERENCE ||
@@ -641,11 +1159,15 @@ export function AdGenerator({ brand }: { brand: Brand }) {
   }
 
   function renameGroup(groupId: string, name: string) {
-    setGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, name } : g)));
+    setGroups((prev) =>
+      prev.map((g) => (g.id === groupId ? { ...g, name } : g)),
+    );
   }
 
   function setGroupDescription(groupId: string, description: string) {
-    setGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, description } : g)));
+    setGroups((prev) =>
+      prev.map((g) => (g.id === groupId ? { ...g, description } : g)),
+    );
   }
 
   function removeGroup(groupId: string) {
@@ -779,10 +1301,10 @@ export function AdGenerator({ brand }: { brand: Brand }) {
       .filter((j) => (r.role === "style" ? j.style : j.format)?.id === r.id)
       .reduce((sum, j) => sum + j.count, 0);
     if (count === 0) return "Not used (target too low)";
+    const inGroup = references.filter((x) => x.groupId === r.groupId);
+    if (inGroup.length === 1) return `Used in ${count} ads · style and layout`;
     const otherRole = r.role === "style" ? "format" : "style";
-    const groupHasOther = references.some(
-      (x) => x.groupId === r.groupId && x.role === otherRole,
-    );
+    const groupHasOther = inGroup.some((x) => x.role === otherRole);
     return `Used in ${count} ads${groupHasOther ? "" : r.role === "style" ? " · new layout" : " · new style"}`;
   }
 
@@ -808,11 +1330,15 @@ export function AdGenerator({ brand }: { brand: Brand }) {
       const json = (await res.json()) as LandingPage & { error?: string };
       if (!res.ok) throw new Error(json.error ?? "Could not read that page");
       setLandingPages((prev) =>
-        prev.some((lp) => lp.fileName === json.fileName) ? prev : [...prev, json],
+        prev.some((lp) => lp.fileName === json.fileName)
+          ? prev
+          : [...prev, json],
       );
       setLandingUrl("");
     } catch (error) {
-      setLandingError(error instanceof Error ? error.message : "Could not read that page");
+      setLandingError(
+        error instanceof Error ? error.message : "Could not read that page",
+      );
     } finally {
       setLandingLoading(false);
     }
@@ -861,25 +1387,41 @@ export function AdGenerator({ brand }: { brand: Brand }) {
 
       const extras = ctx.brief.dimensions.filter((d) => d !== chunk.dimension);
       const replacedIds = new Set(
-        json.ads.flatMap((ad) => [ad.id, ...extras.map((dimension) => resizedAdId(chunk, ad.variation, dimension))]),
+        json.ads.flatMap((ad) => [
+          ad.id,
+          ...extras.map((dimension) =>
+            resizedAdId(chunk, ad.variation, dimension),
+          ),
+        ]),
       );
-      setAds((prev) => [...prev.filter((a) => !replacedIds.has(a.id)), ...json.ads]);
+      setAds((prev) => [
+        ...prev.filter((a) => !replacedIds.has(a.id)),
+        ...json.ads,
+      ]);
 
       const resizeFailures: string[] = [];
       await runPool(
         json.ads.flatMap((ad) =>
           extras.map((dimension) => async () => {
             try {
-              const file = await dataUrlToFile(ad.imageUrl, `${ad.dimension}-${ad.variation}.png`);
+              const file = await dataUrlToFile(
+                ad.imageUrl,
+                `${ad.dimension}-${ad.variation}.png`,
+              );
               const resizeForm = new FormData();
               resizeForm.append("brief", JSON.stringify(ctx.brief));
               resizeForm.append("options", JSON.stringify(ctx.options));
               resizeForm.append("dimension", dimension);
               resizeForm.append("image", file);
-              const resizeRes = await fetch("/api/resize-ad", { method: "POST", body: resizeForm });
+              const resizeRes = await fetch("/api/resize-ad", {
+                method: "POST",
+                body: resizeForm,
+              });
               const resized = (await resizeRes.json().catch(() => ({
                 error: `Resize failed (${resizeRes.status} ${resizeRes.statusText})`,
-              }))) as { imageUrl: string; prompt: string; failures: string[] } | { error: string };
+              }))) as
+                | { imageUrl: string; prompt: string; failures: string[] }
+                | { error: string };
               if ("error" in resized) throw new Error(resized.error);
               if (run.current?.id !== ctx.id) return;
               const next: GeneratedAd = {
@@ -890,7 +1432,8 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                 prompt: resized.prompt,
               };
               setAds((prev) => [...prev.filter((a) => a.id !== next.id), next]);
-              if (resized.failures.length > 0) resizeFailures.push(...resized.failures);
+              if (resized.failures.length > 0)
+                resizeFailures.push(...resized.failures);
             } catch (err) {
               resizeFailures.push(
                 err instanceof Error
@@ -922,6 +1465,44 @@ export function AdGenerator({ brand }: { brand: Brand }) {
    * Each finished image is then sent back to the model to be resized into the other sizes.
    * Results appear group by group as each chunk finishes.
    */
+  function startNewAdSet() {
+    setConfirmNewAdSet(false);
+    for (const reference of references) URL.revokeObjectURL(reference.previewUrl);
+    run.current = null;
+    setStage("inputs");
+    setReferenceSource("upload");
+    setProductId(null);
+    setProductPhotos({});
+    setDimensions(["4x5"]);
+    setCopyMode("separate");
+    setCopy("");
+    setProductVisibility("secondary");
+    setTargetAds(4);
+    setVariationsText("4");
+    setLandingPages([]);
+    setLandingUrl("");
+    setLandingError(null);
+    setGroups([
+      { id: crypto.randomUUID(), name: "Reference group 1", description: "" },
+    ]);
+    setReferences([]);
+    setError(null);
+    setAds([]);
+    setOpenAdId(null);
+    setSelectedIds(new Set());
+    setOriginals({});
+    setShowingOriginal(new Set());
+    setRegeneratingKeys(new Set());
+    setRegenEditor(null);
+    setRegenInstruction("");
+    setRegenOthers(true);
+    setRegenExtra(null);
+    setRegenErrors({});
+    setResultBatches([]);
+    setChunks([]);
+    setPreparing(false);
+  }
+
   async function generate() {
     setPreparing(true);
     setError(null);
@@ -946,7 +1527,15 @@ export function AdGenerator({ brand }: { brand: Brand }) {
 
       run.current = ctx;
       setAds([]);
-      setDeselectedIds(new Set());
+      setOriginals({});
+      setShowingOriginal(new Set());
+      setRegeneratingKeys(new Set());
+      setRegenEditor(null);
+      setRegenInstruction("");
+      setRegenOthers(true);
+      setRegenExtra(null);
+      setRegenErrors({});
+      setSelectedIds(new Set());
       setResultBatches(batches);
       setChunks(planned);
       setStage("results");
@@ -966,12 +1555,171 @@ export function AdGenerator({ brand }: { brand: Brand }) {
     if (run.current) void runChunk(run.current, chunk);
   }
 
+  async function regenerateVariation(shown: GeneratedAd) {
+    const ctx = run.current;
+    const instruction = regenInstruction.trim();
+    if (!ctx || !instruction) return;
+    const key = variationKey(shown);
+    const targetDimension = shown.dimension;
+    const alsoOthers = regenOthers && ctx.brief.dimensions.length > 1;
+    const loadingIds = (
+      alsoOthers ? ctx.brief.dimensions : [targetDimension]
+    ).map((dimension) => `${key}:${dimension}`);
+
+    setRegeneratingKeys((prev) => {
+      const next = new Set(prev);
+      for (const id of loadingIds) next.add(id);
+      return next;
+    });
+    setRegenEditor(null);
+    setRegenErrors((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    const runId = ctx.id;
+    try {
+      const file = await dataUrlToFile(
+        shown.imageUrl,
+        `variation-${shown.variation}.png`,
+      );
+      const files: { name: string; file: File }[] = [{ name: "image", file }];
+      for (const refId of [shown.styleRefId, shown.formatRefId]) {
+        const reference = refId ? ctx.referenceFiles.get(refId) : undefined;
+        if (refId && reference)
+          files.push({ name: `reference:${refId}`, file: reference });
+      }
+      for (const [productId, productFile] of ctx.productFiles) {
+        files.push({ name: `product:${productId}`, file: productFile });
+      }
+      if (regenExtra) files.push({ name: "extra", file: regenExtra });
+      const generated = await postImageJob(
+        "/api/regenerate-ad",
+        {
+          brief: JSON.stringify(ctx.brief),
+          options: JSON.stringify(ctx.options),
+          dimension: targetDimension,
+          instruction,
+          styleRefId: shown.styleRefId ?? "",
+          formatRefId: shown.formatRefId ?? "",
+        },
+        files,
+      );
+      if ("error" in generated) throw new Error(generated.error);
+      if (run.current?.id !== runId) return;
+
+      const family = adsRef.current.filter(
+        (item) => variationKey(item) === key,
+      );
+      const saved = alsoOthers
+        ? family
+        : family.filter((item) => item.dimension === targetDimension);
+      setOriginals((prev) => {
+        const next = { ...prev };
+        for (const item of saved) {
+          if (!next[item.id])
+            next[item.id] = { imageUrl: item.imageUrl, prompt: item.prompt };
+        }
+        return next;
+      });
+
+      const sourceId = `${shown.batchId}-${shown.styleRefId ?? "none"}-${shown.formatRefId ?? "none"}-${targetDimension}-${shown.variation}`;
+      const sourceAd: GeneratedAd = {
+        ...(family.find((item) => item.id === sourceId) ?? shown),
+        id: sourceId,
+        batchId: shown.batchId,
+        styleRefId: shown.styleRefId,
+        formatRefId: shown.formatRefId,
+        dimension: targetDimension,
+        variation: shown.variation,
+        imageUrl: generated.imageUrl,
+        prompt: generated.prompt,
+      };
+      setAds((prev) => [
+        ...prev.filter((item) => item.id !== sourceId),
+        sourceAd,
+      ]);
+
+      const extras = alsoOthers
+        ? ctx.brief.dimensions.filter(
+            (dimension) => dimension !== targetDimension,
+          )
+        : [];
+      const resizeFailures: string[] = [];
+      await runPool(
+        extras.map((dimension) => async () => {
+          try {
+            const resizeFile = await dataUrlToFile(
+              generated.imageUrl,
+              `${targetDimension}-${shown.variation}.png`,
+            );
+            const resized = await postImageJob(
+              "/api/resize-ad",
+              {
+                brief: JSON.stringify(ctx.brief),
+                options: JSON.stringify(ctx.options),
+                dimension,
+              },
+              [{ name: "image", file: resizeFile }],
+            );
+            if ("error" in resized) throw new Error(resized.error);
+            if (run.current?.id !== runId) return;
+            const nextAd: GeneratedAd = {
+              ...sourceAd,
+              id: `${shown.batchId}-${shown.styleRefId ?? "none"}-${shown.formatRefId ?? "none"}-${dimension}-${shown.variation}`,
+              dimension,
+              imageUrl: resized.imageUrl,
+              prompt: resized.prompt,
+            };
+            setAds((prev) => [
+              ...prev.filter((item) => item.id !== nextAd.id),
+              nextAd,
+            ]);
+          } catch (err) {
+            resizeFailures.push(
+              err instanceof Error
+                ? `${dimension}: ${err.message}`
+                : `Could not resize to ${dimension}`,
+            );
+          }
+        }),
+        2,
+      );
+      if (run.current?.id !== runId) return;
+      setShowingOriginal((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+      if (resizeFailures.length > 0) {
+        setRegenErrors((prev) => ({
+          ...prev,
+          [key]: resizeFailures.join("; "),
+        }));
+      }
+    } catch (err) {
+      if (run.current?.id !== runId) return;
+      setRegenErrors((prev) => ({
+        ...prev,
+        [key]: err instanceof Error ? err.message : "Regeneration failed",
+      }));
+    } finally {
+      if (run.current?.id === runId) {
+        setRegeneratingKeys((prev) => {
+          const next = new Set(prev);
+          for (const id of loadingIds) next.delete(id);
+          return next;
+        });
+      }
+    }
+  }
+
   function adIsSelected(ad: GeneratedAd) {
-    return !deselectedIds.has(ad.id);
+    return selectedIds.has(ad.id);
   }
 
   function toggleAd(ad: GeneratedAd) {
-    setDeselectedIds((prev) => {
+    setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(ad.id)) next.delete(ad.id);
       else next.add(ad.id);
@@ -979,13 +1727,28 @@ export function AdGenerator({ brand }: { brand: Brand }) {
     });
   }
 
-  function downloadAds(list: GeneratedAd[]) {
-    for (const ad of list) {
-      const a = document.createElement("a");
-      a.href = ad.imageUrl;
-      a.download = fileNameFor(ad);
-      a.click();
+  async function downloadAds(list: GeneratedAd[], folder: string) {
+    if (list.length === 0) return;
+    if (list.length === 1) {
+      saveDownload(list[0].imageUrl, fileNameFor(list[0]));
+      return;
     }
+    const used = new Map<string, number>();
+    const named = list.map((ad) => ({
+      ad,
+      name: uniqueDownloadName(fileNameFor(ad), used),
+    }));
+    const files = await Promise.all(
+      named.map(async ({ ad, name }) => {
+        const response = await fetch(ad.imageUrl);
+        return { name, bytes: new Uint8Array(await response.arrayBuffer()) };
+      }),
+    );
+    const safeFolder = folder.replace(/[\\/:*?"<>|]+/g, " ").trim() || "ads";
+    const zip = zipFolder(safeFolder, files);
+    const url = URL.createObjectURL(new Blob([zip], { type: "application/zip" }));
+    saveDownload(url, `${safeFolder}.zip`);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   function fileNameFor(ad: GeneratedAd) {
@@ -1004,16 +1767,26 @@ export function AdGenerator({ brand }: { brand: Brand }) {
       .sort(
         (a, b) =>
           a.variation - b.variation ||
-          dimensionOrder.indexOf(a.dimension) - dimensionOrder.indexOf(b.dimension),
+          dimensionOrder.indexOf(a.dimension) -
+            dimensionOrder.indexOf(b.dimension),
       );
-  const galleryAds = resultBatches.flatMap((b) => adsInGroup(b.id));
+  const displayAd = (ad: GeneratedAd): GeneratedAd => {
+    if (!showingOriginal.has(variationKey(ad))) return ad;
+    const saved = originals[ad.id];
+    return saved
+      ? { ...ad, imageUrl: saved.imageUrl, prompt: saved.prompt }
+      : ad;
+  };
+  const galleryAds = resultBatches.flatMap((b) =>
+    adsInGroup(b.id).map(displayAd),
+  );
   const groupNames = Object.fromEntries(
     resultBatches.map((b) => [b.id, batchLabel(b)]),
   );
 
   return (
     <div>
-      <ProgressBar stage={stage} />
+      <ProgressBar stage={stage} onSelect={setStage} />
 
       {stage === "inputs" && (
         <div className="flex flex-col gap-8">
@@ -1042,11 +1815,10 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                         aria-pressed={checked}
                         onClick={() =>
                           setDimensions((prev) => {
-                            if (prev.includes(d)) {
-                              if (prev.length === 1) return prev;
-                              return prev.filter((x) => x !== d);
-                            }
-                            return DIMENSIONS.filter((x) => x === d || prev.includes(x));
+                            if (prev.includes(d)) return prev.filter((x) => x !== d);
+                            return DIMENSIONS.filter(
+                              (x) => x === d || prev.includes(x),
+                            );
                           })
                         }
                         className={`rounded-lg border px-3 py-1.5 text-sm ${
@@ -1060,10 +1832,14 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                     );
                   })}
                 </div>
-                <span className="font-normal text-zinc-400">
-                  {dimensions.length > 1
-                    ? `Generated in ${dimensions[0]}. Each image is then sent back to the model to be resized to ${dimensions.slice(1).join(" and ")}.`
-                    : "Images are generated in this size."}
+                <span
+                  className={`font-normal ${dimensions.length === 0 ? "text-rose-600" : "text-zinc-400"}`}
+                >
+                  {dimensions.length === 0
+                    ? "Choose at least one size before continuing."
+                    : dimensions.length > 1
+                      ? `Generated in ${dimensions[0]}. Each image is then sent back to the model to be resized to ${dimensions.slice(1).join(" and ")}.`
+                      : "Images are generated in this size."}
                 </span>
               </div>
 
@@ -1115,7 +1891,9 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                 />
                 <span
                   className={
-                    variationsOutOfRange ? "font-normal text-rose-600" : "font-normal text-zinc-400"
+                    variationsOutOfRange
+                      ? "font-normal text-rose-600"
+                      : "font-normal text-zinc-400"
                   }
                 >
                   {variationsOutOfRange
@@ -1124,83 +1902,100 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                 </span>
               </label>
 
-              <label className="field">
-                <span>Copy</span>
-                <select
-                  value={copyMode}
-                  onChange={(e) => setCopyMode(e.target.value as CopyMode)}
-                >
-                  <option value="separate">
-                    Copy separate (no text in image)
-                  </option>
-                  <option value="in-image">Render copy in image</option>
-                </select>
-              </label>
-              {copyMode === "in-image" ? (
+              <div className="col-span-2 grid grid-cols-2 gap-4">
                 <label className="field">
-                  <span>Ad copy</span>
-                  <textarea
-                    rows={2}
-                    value={copy}
-                    onChange={(e) => setCopy(e.target.value)}
-                  />
-                </label>
-              ) : (
-                <div />
-              )}
-
-              <div className="field col-span-2">
-                <span>Landing page link (optional)</span>
-                <form
-                  className="flex items-center gap-2"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    void addLandingPage(landingUrl);
-                  }}
-                >
-                  <input
-                    type="text"
-                    inputMode="url"
-                    value={landingUrl}
-                    onChange={(e) => setLandingUrl(e.target.value)}
-                    placeholder={brand.website}
-                    aria-label="Landing page link"
-                    className="min-w-0 flex-1"
-                  />
-                  <button
-                    type="submit"
-                    disabled={landingLoading || !landingUrl.trim()}
-                    className="btn-secondary shrink-0"
+                  <span>Copy</span>
+                  <select
+                    value={copyMode}
+                    onChange={(e) => setCopyMode(e.target.value as CopyMode)}
                   >
-                    {landingLoading ? "Reading…" : "Add"}
-                  </button>
-                </form>
-                <span className={landingError ? "font-normal text-rose-600" : "font-normal text-zinc-400"}>
-                  {landingError ??
-                    "Paste a link. We read the title, description, headings, and page copy."}
-                </span>
-                {landingPages.length > 0 && (
-                  <div className="mt-1 flex flex-wrap items-center gap-2">
-                    {landingPages.map((lp, i) => (
-                      <span
-                        key={`${lp.fileName}-${i}`}
-                        title={[lp.fileName, lp.description, ...lp.headings].filter(Boolean).join("\n")}
-                        className="flex items-center gap-2 rounded-lg bg-zinc-100 px-3 py-1.5 text-sm font-normal text-zinc-800"
+                    <option value="separate">
+                      Copy separate (no text in image)
+                    </option>
+                    <option value="in-image">Render copy in image</option>
+                  </select>
+                </label>
+                {copyMode === "in-image" && (
+                  <>
+                    <label className="field col-span-2">
+                      <span>Ad copy</span>
+                      <textarea
+                        rows={2}
+                        value={copy}
+                        onChange={(e) => setCopy(e.target.value)}
+                      />
+                    </label>
+                    <div className="field col-span-2">
+                      <span>Landing page link (optional)</span>
+                      <form
+                        className="flex items-center gap-2"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          void addLandingPage(landingUrl);
+                        }}
                       >
-                        <span className="max-w-64 truncate">{lp.title}</span>
+                        <input
+                          type="text"
+                          inputMode="url"
+                          value={landingUrl}
+                          onChange={(e) => setLandingUrl(e.target.value)}
+                          placeholder={brand.website}
+                          aria-label="Landing page link"
+                          className="min-w-0 flex-1"
+                        />
                         <button
-                          type="button"
-                          onClick={() =>
-                            setLandingPages((prev) => prev.filter((_, j) => j !== i))
-                          }
-                          className="text-zinc-400 hover:text-rose-600"
-                          aria-label={`Remove ${lp.title}`}
+                          type="submit"
+                          disabled={landingLoading || !landingUrl.trim()}
+                          className="btn-secondary shrink-0"
                         >
-                          ×
+                          {landingLoading ? "Reading…" : "Add"}
                         </button>
+                      </form>
+                      <span
+                        className={
+                          landingError
+                            ? "font-normal text-rose-600"
+                            : "font-normal text-zinc-400"
+                        }
+                      >
+                        {landingError ??
+                          "Paste a link. We read the title, description, headings, and page copy."}
                       </span>
-                    ))}
-                  </div>
+                      {landingPages.length > 0 && (
+                        <div className="mt-1 flex flex-wrap items-center gap-2">
+                          {landingPages.map((lp, i) => (
+                            <span
+                              key={`${lp.fileName}-${i}`}
+                              title={[
+                                lp.fileName,
+                                lp.description,
+                                ...lp.headings,
+                              ]
+                                .filter(Boolean)
+                                .join("\n")}
+                              className="flex items-center gap-2 rounded-lg bg-zinc-100 px-3 py-1.5 text-sm font-normal text-zinc-800"
+                            >
+                              <span className="max-w-64 truncate">
+                                {lp.title}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setLandingPages((prev) =>
+                                    prev.filter((_, j) => j !== i),
+                                  )
+                                }
+                                className="text-zinc-400 hover:text-rose-600"
+                                aria-label={`Remove ${lp.title}`}
+                              >
+                                ×
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </>
                 )}
               </div>
             </div>
@@ -1279,8 +2074,8 @@ export function AdGenerator({ brand }: { brand: Brand }) {
             <p className="mb-5 text-sm text-zinc-500">
               Each reference group generates its own batch. Write a description
               for that reference group, then give it at least one style or
-              format reference.
-              Every reference image gets the number of variations you set.
+              format reference. Every reference image gets the number of
+              variations you set.
             </p>
 
             <div className="flex flex-col gap-4">
@@ -1323,7 +2118,9 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                       <textarea
                         rows={3}
                         value={groups[groupIndex].description}
-                        onChange={(e) => setGroupDescription(groupId, e.target.value)}
+                        onChange={(e) =>
+                          setGroupDescription(groupId, e.target.value)
+                        }
                         placeholder="Write the description for this reference group"
                         aria-label={`Description for ${groups[groupIndex].name.trim() || `reference group ${groupIndex + 1}`}`}
                       />
@@ -1344,7 +2141,9 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                             onFiles={(files) =>
                               addReferences(groupId, role, files)
                             }
-                            onReference={(id) => moveReference(id, groupId, role)}
+                            onReference={(id) =>
+                              moveReference(id, groupId, role)
+                            }
                           >
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
@@ -1430,7 +2229,8 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                   aria-label="Add reference group"
                   className="flex h-12 items-center justify-center gap-2 rounded-xl border-2 border-dashed border-zinc-300 text-sm text-zinc-500 hover:border-zinc-500 hover:text-zinc-800"
                 >
-                  <span className="text-xl leading-none">+</span> Add reference group
+                  <span className="text-xl leading-none">+</span> Add reference
+                  group
                 </button>
               )}
             </div>
@@ -1496,10 +2296,13 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                 {copyMode === "separate" ? "Separate" : `In image: "${copy}"`}
               </dd>
               <dt className="text-zinc-500">Landing pages</dt>
-              <dd>{landingPages.map((lp) => lp.title).join(", ") || "None"}</dd>
+              <dd>
+                {brief.landingPages.map((lp) => lp.title).join(", ") || "None"}
+              </dd>
               <dt className="text-zinc-500">Variations</dt>
               <dd>
-                {targetAds} per reference · {totalAds} ads across {batches.length} reference group
+                {targetAds} per reference · {totalAds} ads across{" "}
+                {batches.length} reference group
                 {batches.length === 1 ? "" : "s"}
               </dd>
             </dl>
@@ -1515,15 +2318,22 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                   </p>
                   <p className="mb-2 text-zinc-500">
                     Keywords:{" "}
-                    {groups.find((g) => g.id === b.id)?.description.trim() || "None"}
+                    {groups.find((g) => g.id === b.id)?.description.trim() ||
+                      "None"}
                   </p>
                   <div className="flex flex-col gap-1.5">
-                    {b.jobs.map((j) => (
+                    {b.jobs.map((j) => {
+                      const coversBoth =
+                        !!j.style && !!j.format && j.style.id === j.format.id;
+                      const shown = coversBoth
+                        ? [j.style]
+                        : [j.style, j.format].filter((ref) => ref !== null);
+                      return (
                       <div
                         key={`${j.style?.id}-${j.format?.id}`}
                         className="flex items-center gap-2"
                       >
-                        {[j.style, j.format].map(
+                        {shown.map(
                           (ref) =>
                             ref && (
                               // eslint-disable-next-line @next/next/no-img-element -- local blob preview
@@ -1539,21 +2349,24 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                             ),
                         )}
                         <span className="min-w-0 flex-1 truncate text-zinc-600">
-                          {j.style ? `style ${j.style.fileName}` : "new style"}{" "}
-                          ×{" "}
-                          {j.format
-                            ? `format ${j.format.fileName}`
-                            : "new layout"}
+                          {coversBoth
+                            ? `style and layout ${j.style?.fileName}`
+                            : `${j.style ? `style ${j.style.fileName}` : "new style"} × ${
+                                j.format
+                                  ? `format ${j.format.fileName}`
+                                  : "new layout"
+                              }`}
                         </span>
                         <span className="text-zinc-500">{j.count} ads</span>
-                        {[j.style, j.format].map(
+                        {shown.map(
                           (ref) =>
                             ref && (
                               <ScoreBadge key={ref.id} metrics={ref.metrics} />
                             ),
                         )}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               ))}
@@ -1672,8 +2485,8 @@ export function AdGenerator({ brand }: { brand: Brand }) {
       )}
 
       {stage === "results" && (
-        <div className="flex flex-col gap-6">
-          <div className="flex items-center justify-between">
+        <div className="flex min-w-0 flex-col gap-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <p
               className="flex items-center gap-2 text-sm text-zinc-500"
               role="status"
@@ -1684,8 +2497,10 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                   aria-hidden
                 />
               )}
-              {ads.length} of {chunks.reduce((sum, c) => sum + c.count, 0) * Math.max(dimensionOrder.length, 1)} ads
-              generated with{" "}
+              {ads.length} of{" "}
+              {chunks.reduce((sum, c) => sum + c.count, 0) *
+                Math.max(dimensionOrder.length, 1)}{" "}
+              ads generated with{" "}
               <code>
                 {GENERATION_MODELS.find((m) => m.id === runOptions.model)
                   ?.label ?? runOptions.model}
@@ -1697,6 +2512,13 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                 </span>
               )}
             </p>
+            <button
+              type="button"
+              onClick={() => setConfirmNewAdSet(true)}
+              className="btn-secondary shrink-0"
+            >
+              Start New Ad Set
+            </button>
           </div>
 
           {resultBatches.map((b) => {
@@ -1705,9 +2527,12 @@ export function AdGenerator({ brand }: { brand: Brand }) {
             const groupSelected = groupAds.filter((ad) => adIsSelected(ad));
             const groupAllSelected = groupSelected.length === groupAds.length;
             const done = groupChunks.filter((c) => c.status === "done").length;
-            const columnCount = groupChunks.reduce((sum, c) => sum + c.count, 0);
+            const columnCount = groupChunks.reduce(
+              (sum, c) => sum + c.count,
+              0,
+            );
             return (
-              <section key={b.id} className="card">
+              <section key={b.id} className="card min-w-0">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                   <h2 className="section-title mb-0">
                     {batchLabel(b)}{" "}
@@ -1717,7 +2542,7 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                   </h2>
                   <button
                     type="button"
-                    onClick={() => downloadAds(groupSelected)}
+                    onClick={() => void downloadAds(groupSelected, batchLabel(b))}
                     disabled={groupSelected.length === 0}
                     className="btn-primary"
                   >
@@ -1741,7 +2566,9 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                             .map((id) => refName(id))
                             .join(" × ")}{" "}
                           · {c.dimension}:{" "}
-                          {c.status === "error" ? c.error : c.failures!.join("; ")}
+                          {c.status === "error"
+                            ? c.error
+                            : c.failures!.join("; ")}
                         </p>
                         {c.status === "error" && (
                           <button
@@ -1755,16 +2582,8 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                       </div>
                     ),
                 )}
-                <div className="overflow-x-auto">
-                  <div
-                    className="flex flex-col gap-8"
-                    style={{
-                      minWidth:
-                        columnCount > 0
-                          ? `calc(${columnCount} * 11rem + ${Math.max(columnCount - 1, 0)} * 1rem)`
-                          : undefined,
-                    }}
-                  >
+                <div className="w-full min-w-0 overflow-x-auto">
+                  <div className="flex w-max min-w-full flex-col gap-8">
                     {dimensionOrder.map((dimension) => {
                       const columns = groupChunks.flatMap((c) =>
                         Array.from({ length: c.count }, (_, i) => ({
@@ -1775,14 +2594,22 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                       );
                       return (
                         <div key={dimension}>
-                          <p className="mb-2 text-sm font-semibold text-zinc-800">{dimension}</p>
+                          <p className="mb-2 text-sm font-semibold text-zinc-800">
+                            {dimension}
+                          </p>
                           <div
-                            className="grid gap-4"
+                            className="grid w-max min-w-full gap-4 px-4"
                             style={{
-                              gridTemplateColumns: `repeat(${Math.max(columnCount, 1)}, minmax(11rem, 1fr))`,
+                              gridTemplateColumns: `repeat(${Math.max(columnCount, 1)}, minmax(0, 12rem))`,
                             }}
                           >
                             {columns.map(({ key, chunk, variation }) => {
+                              const vKey = variationKey({
+                                batchId: chunk.groupId,
+                                styleRefId: chunk.styleRefId,
+                                formatRefId: chunk.formatRefId,
+                                variation,
+                              });
                               const ad = groupAds.find(
                                 (item) =>
                                   item.styleRefId === chunk.styleRefId &&
@@ -1791,14 +2618,43 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                                   item.variation === variation,
                               );
                               if (ad) {
+                                const shown = displayAd(ad);
+                                const busy = regeneratingKeys.has(
+                                  `${vKey}:${ad.dimension}`,
+                                );
                                 return (
                                   <ResultFigure
                                     key={ad.id}
-                                    ad={ad}
+                                    ad={shown}
                                     selected={adIsSelected(ad)}
-                                    downloadName={fileNameFor(ad)}
+                                    downloadName={fileNameFor(shown)}
+                                    loading={busy}
                                     onOpen={() => setOpenAdId(ad.id)}
                                     onToggle={() => toggleAd(ad)}
+                                    regenerate={{
+                                      error: regenErrors[vKey],
+                                      hasOriginal: Boolean(originals[ad.id]),
+                                      showingOriginal:
+                                        showingOriginal.has(vKey),
+                                      onOpenForm: () => {
+                                        setRegenEditor({
+                                          key: vKey,
+                                          dimension: ad.dimension,
+                                          imageUrl: shown.imageUrl,
+                                          variation: shown.variation,
+                                        });
+                                        setRegenInstruction("");
+                                        setRegenOthers(true);
+                                        setRegenExtra(null);
+                                      },
+                                      onToggleOriginal: () =>
+                                        setShowingOriginal((prev) => {
+                                          const next = new Set(prev);
+                                          if (next.has(vKey)) next.delete(vKey);
+                                          else next.add(vKey);
+                                          return next;
+                                        }),
+                                    }}
                                   />
                                 );
                               }
@@ -1810,9 +2666,13 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                                   item.variation === variation,
                               );
                               const waiting =
-                                chunk.status === "pending" || chunk.status === "running";
-                              const label =
-                                dimension === chunk.dimension
+                                chunk.status === "pending" ||
+                                chunk.status === "running";
+                              const label = regeneratingKeys.has(
+                                `${vKey}:${dimension}`,
+                              )
+                                ? "Regenerating…"
+                                : dimension === chunk.dimension
                                   ? chunk.status === "running"
                                     ? "Generating…"
                                     : chunk.status === "pending"
@@ -1824,8 +2684,13 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                                       ? "Waiting"
                                       : undefined;
                               return (
-                                <div key={key} className="flex flex-col gap-1">
-                                  <p className="text-left text-xs font-semibold text-zinc-800">#{variation}</p>
+                                <div
+                                  key={key}
+                                  className="flex w-full min-w-0 flex-col gap-1"
+                                >
+                                  <p className="text-left text-xs font-semibold text-zinc-800">
+                                    #{variation}
+                                  </p>
                                   <div
                                     className={`${ASPECT_CLASSES[dimension]} flex w-full items-center justify-center rounded-lg bg-zinc-100 text-xs text-zinc-400 ${
                                       label ? "animate-pulse" : ""
@@ -1853,6 +2718,38 @@ export function AdGenerator({ brand }: { brand: Brand }) {
               isSelected={adIsSelected}
               onToggleSelected={toggleAd}
               onClose={() => setOpenAdId(null)}
+            />
+          )}
+          {confirmNewAdSet && (
+            <StartNewAdSetDialog
+              onCancel={() => setConfirmNewAdSet(false)}
+              onConfirm={startNewAdSet}
+            />
+          )}
+          {regenEditor && (
+            <RegenerateDialog
+              imageUrl={regenEditor.imageUrl}
+              variation={regenEditor.variation}
+              dimension={regenEditor.dimension}
+              instruction={regenInstruction}
+              showOthers={dimensionOrder.length > 1}
+              alsoOthers={regenOthers}
+              onInstruction={setRegenInstruction}
+              onAlsoOthers={setRegenOthers}
+              onExtra={setRegenExtra}
+              onCancel={() => setRegenEditor(null)}
+              onSubmit={() => {
+                const ad = ads.find(
+                  (item) =>
+                    variationKey(item) === regenEditor.key &&
+                    item.dimension === regenEditor.dimension,
+                );
+                if (!ad) return;
+                void regenerateVariation({
+                  ...displayAd(ad),
+                  imageUrl: regenEditor.imageUrl,
+                });
+              }}
             />
           )}
         </div>

@@ -50,6 +50,7 @@ export function BrandTabs() {
         <div
           key={brand.id}
           role="tabpanel"
+          className="min-w-0"
           hidden={brand.id !== activeId}
           style={{ "--brand": brand.color } as React.CSSProperties}
         >

@@ -1,7 +1,7 @@
 import { countAds, planBatches } from "@/lib/batches";
 import { BRANDS } from "@/lib/brands";
 import { toReferenceBreakdown } from "@/lib/breakdown";
-import { buildPrompt, getGenerator, type ImageInput } from "@/lib/generation";
+import { buildPrompt, getGenerator, referenceCoversBoth, type ImageInput } from "@/lib/generation";
 import {
   GEMINI_IMAGE_SIZES,
   IMAGE_QUALITIES,
@@ -130,9 +130,11 @@ export async function POST(request: Request) {
     const style = chunk.styleRefId ? brief.references.find((r) => r.id === chunk.styleRefId)! : null;
     const format = chunk.formatRefId ? brief.references.find((r) => r.id === chunk.formatRefId)! : null;
 
-    const styleImage = style ? await toImageInput(form.get(`reference:${style.id}`)) : undefined;
+    const coversBoth = referenceCoversBoth({ format, style });
+    const styleImage =
+      style && !coversBoth ? await toImageInput(form.get(`reference:${style.id}`)) : undefined;
     const formatImage = format ? await toImageInput(form.get(`reference:${format.id}`)) : undefined;
-    if (style && !styleImage) throw new Error(`Missing image for style reference ${style.fileName}`);
+    if (style && !coversBoth && !styleImage) throw new Error(`Missing image for style reference ${style.fileName}`);
     if (format && !formatImage) throw new Error(`Missing image for format reference ${format.fileName}`);
 
     // Product photos are optional; when present they're sent after the references and

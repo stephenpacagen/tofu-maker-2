@@ -10,8 +10,8 @@ export const REFERENCE_ROLE_LABELS: Record<ReferenceRole, string> = {
 };
 
 export const REFERENCE_ROLE_HINTS: Record<ReferenceRole, string> = {
-  style: "Copy its look: palette, lighting, typography feel, mood.",
-  format: "Copy its layout: composition and element placement.",
+  style: "Art style and aesthetics: palette, lighting, mood, and how it is drawn.",
+  format: "The main view. Match its framing, composition, and element placement.",
 };
 
 export type CopyMode = "separate" | "in-image";

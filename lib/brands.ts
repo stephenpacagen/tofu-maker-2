@@ -14,6 +14,8 @@ export type Brand = {
   color: string;
   /** Public site, used as the landing-page link placeholder. */
   website: string;
+  /** Typefaces for on-image text. Headlines use `title`; every other line uses `text`. */
+  fonts?: { title: string; text: string };
   products: Product[];
 };
 
@@ -23,6 +25,7 @@ export const BRANDS: Brand[] = [
     name: "Pacagen",
     color: "#044eb8",
     website: "https://pacagen.com",
+    fonts: { title: "Domine", text: "Work Sans" },
     products: [
       {
         id: "cans",
@@ -66,6 +69,7 @@ export const BRANDS: Brand[] = [
     name: "RE:YOU",
     color: "#5d2a2c",
     website: "https://getreyou.com",
+    fonts: { title: "Canela", text: "TestDieGrotesk" },
     products: [
       {
         id: "hair-revival-serum",
