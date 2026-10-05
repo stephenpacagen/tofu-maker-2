@@ -229,7 +229,7 @@ export function ReferenceCart({
                 disabled={!canReview}
                 className="btn-primary flex-1"
               >
-                Review brief
+                Next Step
               </button>
             </div>
           )}

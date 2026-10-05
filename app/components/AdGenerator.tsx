@@ -2093,10 +2093,7 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                     type="button"
                     role="radio"
                     aria-checked={selected}
-                    onClick={() => {
-                      setReferenceSource(s.id);
-                      if (s.id === "library") setCartOpen(true);
-                    }}
+                    onClick={() => setReferenceSource(s.id)}
                     className={`flex flex-col gap-1 rounded-xl border-2 p-4 text-left transition-colors ${
                       selected
                         ? "border-brand bg-brand/5"
