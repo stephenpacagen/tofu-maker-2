@@ -52,7 +52,7 @@ export function LibraryBrowser({
   suggestedQuery: string;
   groupNames: string[];
   addedTo: (adId: string) => { groupIndex: number; role: ReferenceRole }[];
-  onAdd: (ads: RankedLibraryAd[], groupIndex: number, role: ReferenceRole) => Promise<void>;
+  onAdd: (ads: RankedLibraryAd[], groupIndex: number, role: ReferenceRole | "both") => Promise<void>;
   onRemove: (adId: string, groupIndex: number, role: ReferenceRole) => void;
 }) {
   const [mode, setMode] = useState<SearchMode>("keyword");
@@ -86,7 +86,7 @@ export function LibraryBrowser({
 
   const [selected, setSelected] = useState<RankedLibraryAd[]>([]);
   const [groupIndex, setGroupIndex] = useState(0);
-  const [role, setRole] = useState<ReferenceRole>("format");
+  const [role, setRole] = useState<ReferenceRole | "both">("both");
   const [adding, setAdding] = useState(false);
   const [pending, setPending] = useState<string[]>([]);
 
@@ -182,6 +182,22 @@ export function LibraryBrowser({
       setSelected([]);
     } finally {
       setAdding(false);
+    }
+  }
+
+  async function toggleEntire(ad: RankedLibraryAd) {
+    const added = addedTo(ad.id).filter((a) => a.groupIndex === targetGroup);
+    const hasBoth = REFERENCE_ROLES.every((r) => added.some((a) => a.role === r));
+    if (hasBoth) {
+      for (const r of REFERENCE_ROLES) onRemove(ad.id, targetGroup, r);
+      return;
+    }
+    const key = `${ad.id}:both`;
+    setPending((prev) => [...prev, key]);
+    try {
+      await onAdd([ad], targetGroup, "both");
+    } finally {
+      setPending((prev) => prev.filter((k) => k !== key));
     }
   }
 
@@ -366,7 +382,7 @@ export function LibraryBrowser({
           ) : (
             <span className="font-medium text-zinc-900">{groupLabel(0)}</span>
           )}
-          <span className="text-xs text-zinc-400">Add one style reference and one format reference.</span>
+          <span className="text-xs text-zinc-400">Select an ad to use it as both style and format.</span>
         </div>
       )}
 
@@ -378,21 +394,25 @@ export function LibraryBrowser({
         {ads?.map((ad) => {
           const checked = isSelected(ad.id);
           const added = addedTo(ad.id);
+          const bothAdded = REFERENCE_ROLES.every((r) =>
+            added.some((a) => a.groupIndex === targetGroup && a.role === r),
+          );
+          const addingBoth = pending.includes(`${ad.id}:both`);
           return (
             <div
               key={ad.id}
-              role="checkbox"
-              aria-checked={checked}
+              role="button"
               tabIndex={0}
-              onClick={() => toggle(ad)}
+              aria-pressed={bothAdded}
+              onClick={() => void toggleEntire(ad)}
               onKeyDown={(e) => {
                 if (e.key === " " || e.key === "Enter") {
                   e.preventDefault();
-                  toggle(ad);
+                  void toggleEntire(ad);
                 }
               }}
               className={`flex cursor-pointer flex-col overflow-hidden rounded-xl border-2 bg-white text-left transition-colors ${
-                checked ? "border-brand" : "border-zinc-200 hover:border-zinc-300"
+                bothAdded || checked ? "border-brand" : "border-zinc-200 hover:border-zinc-300"
               }`}
             >
               <div className="relative bg-zinc-100">
@@ -403,13 +423,20 @@ export function LibraryBrowser({
                   loading="lazy"
                   className="aspect-[4/5] w-full object-contain"
                 />
-                <span
+                <button
+                  type="button"
+                  aria-label={checked ? "Deselect for bulk add" : "Select for bulk add"}
+                  aria-pressed={checked}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggle(ad);
+                  }}
                   className={`absolute top-2 left-2 flex h-6 w-6 items-center justify-center rounded-md border-2 text-xs text-white ${
                     checked ? "border-brand bg-brand" : "border-white bg-black/20"
                   }`}
                 >
                   {checked && "✓"}
-                </span>
+                </button>
                 <span className="absolute top-2 right-2">
                   <ScoreBadge metrics={ad.metrics} />
                 </span>
@@ -450,6 +477,9 @@ export function LibraryBrowser({
                     </span>
                   ))}
                 </div>
+                {bothAdded && (
+                  <p className="text-[11px] font-medium text-brand">{addingBoth ? "Adding…" : "Style and format"}</p>
+                )}
                 <div className="grid grid-cols-2 gap-1.5">
                   {REFERENCE_ROLES.map((r) => {
                     const isAdded = added.some((a) => a.groupIndex === targetGroup && a.role === r);
@@ -511,7 +541,12 @@ export function LibraryBrowser({
         <div className="sticky bottom-4 mt-5 flex flex-wrap items-center gap-3 rounded-xl border border-zinc-200 bg-white p-3 shadow-lg">
           <span className="text-sm font-medium">{selected.length} selected</span>
           <span className="text-sm text-zinc-500">Add as</span>
-          <select className={INLINE_SELECT} value={role} onChange={(e) => setRole(e.target.value as ReferenceRole)}>
+          <select
+            className={INLINE_SELECT}
+            value={role}
+            onChange={(e) => setRole(e.target.value as ReferenceRole | "both")}
+          >
+            <option value="both">Style and format</option>
             {REFERENCE_ROLES.map((r) => (
               <option key={r} value={r}>
                 {REFERENCE_ROLE_LABELS[r]}s

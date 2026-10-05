@@ -1208,18 +1208,22 @@ export function AdGenerator({ brand }: { brand: Brand }) {
   async function addLibraryAds(
     ads: RankedLibraryAd[],
     groupIndex: number,
-    role: ReferenceRole,
+    role: ReferenceRole | "both",
   ) {
     const groupId = groupIds[groupIndex];
-    const fresh = ads.filter(
-      (ad) =>
-        !references.some(
-          (r) =>
-            r.libraryAdId === ad.id && r.groupId === groupId && r.role === role,
-        ),
-    );
+    const roles: ReferenceRole[] = role === "both" ? [...REFERENCE_ROLES] : [role];
     const drafts = await Promise.all(
-      fresh.map(async (ad): Promise<ReferenceDraft | null> => {
+      ads.map(async (ad): Promise<ReferenceDraft[]> => {
+        const missing = roles.filter(
+          (r) =>
+            !references.some(
+              (ref) =>
+                ref.libraryAdId === ad.id &&
+                ref.groupId === groupId &&
+                ref.role === r,
+            ),
+        );
+        if (missing.length === 0) return [];
         const ext = ad.imageUrl.startsWith("data:image/svg")
           ? "svg"
           : (ad.imageUrl.match(/\.(jpe?g|png|webp)(?:\?|$)/i)?.[1] ?? "jpg");
@@ -1227,24 +1231,24 @@ export function AdGenerator({ brand }: { brand: Brand }) {
           ad.imageUrl,
           `${ad.brand}-${ad.id}.${ext}`.replace(/\s+/g, "_"),
         ).catch(() => null);
-        if (!file) return null;
-        return {
+        if (!file) return [];
+        return missing.map((r) => ({
           id: crypto.randomUUID(),
           groupId,
           file,
           previewUrl: URL.createObjectURL(file),
-          role,
+          role: r,
           prompt: "",
           metrics: ad.metrics,
-          source: "sourced",
+          source: "sourced" as const,
           libraryAdId: ad.id,
           sourcedFrom: [ad.brand, ad.headline || ad.category]
             .filter(Boolean)
             .join(" · "),
-        };
+        }));
       }),
     );
-    const added = drafts.filter((d) => d !== null);
+    const added = drafts.flat();
     setReferences((prev) => [...prev, ...added]);
     if (added.length > 0) setCartOpen(true);
   }
