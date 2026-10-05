@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { countAds, pairGap, planBatches, splitEvenly, type Batch } from "@/lib/batches";
+import { filesForUpload } from "@/lib/upload-image";
 import { zipFolder } from "@/lib/zip-folder";
 import type { Brand } from "@/lib/brands";
 import { toInputBreakdown, toReferenceBreakdown } from "@/lib/breakdown";
@@ -170,7 +171,7 @@ async function postImageJob(
 ): Promise<ImageJobResponse> {
   const form = new FormData();
   for (const [key, value] of Object.entries(fields)) form.append(key, value);
-  for (const item of files) form.append(item.name, item.file);
+  for (const item of await filesForUpload(files)) form.append(item.name, item.file);
   const res = await fetch(path, { method: "POST", body: form });
   return (await res.json().catch(() => ({
     error: `Request failed (${res.status} ${res.statusText})`,
@@ -1374,16 +1375,20 @@ export function AdGenerator({ brand }: { brand: Brand }) {
         count: chunk.count,
         variationStart: chunk.variationStart,
       };
+      const uploadFiles: { name: string; file: File }[] = [];
+      for (const refId of new Set([chunk.styleRefId, chunk.formatRefId])) {
+        if (!refId) continue;
+        const file = ctx.referenceFiles.get(refId);
+        if (file) uploadFiles.push({ name: `reference:${refId}`, file });
+      }
+      for (const [productId, file] of ctx.productFiles)
+        uploadFiles.push({ name: `product:${productId}`, file });
+
       const form = new FormData();
       form.append("brief", JSON.stringify(ctx.brief));
       form.append("chunk", JSON.stringify(request));
       form.append("options", JSON.stringify(ctx.options));
-      for (const refId of [chunk.styleRefId, chunk.formatRefId]) {
-        const file = refId ? ctx.referenceFiles.get(refId) : undefined;
-        if (refId && file) form.append(`reference:${refId}`, file);
-      }
-      for (const [productId, file] of ctx.productFiles)
-        form.append(`product:${productId}`, file);
+      for (const item of await filesForUpload(uploadFiles)) form.append(item.name, item.file);
 
       const res = await fetch("/api/generate", { method: "POST", body: form });
       const json = (await res.json().catch(() => ({
