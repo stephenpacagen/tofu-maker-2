@@ -84,10 +84,7 @@ export function LibraryBrowser({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [selected, setSelected] = useState<RankedLibraryAd[]>([]);
   const [groupIndex, setGroupIndex] = useState(0);
-  const [role, setRole] = useState<ReferenceRole | "both">("both");
-  const [adding, setAdding] = useState(false);
   const [pending, setPending] = useState<string[]>([]);
 
   const groupCount = groupNames.length;
@@ -169,20 +166,6 @@ export function LibraryBrowser({
   function pickBrand(b: LibraryBrand) {
     setBrand(b);
     void loadAds({ brandId: b.id });
-  }
-
-  const isSelected = (id: string) => selected.some((ad) => ad.id === id);
-  const toggle = (ad: RankedLibraryAd) =>
-    setSelected((prev) => (isSelected(ad.id) ? prev.filter((x) => x.id !== ad.id) : [...prev, ad]));
-
-  async function add() {
-    setAdding(true);
-    try {
-      await onAdd(selected, targetGroup, role);
-      setSelected([]);
-    } finally {
-      setAdding(false);
-    }
   }
 
   async function toggleEntire(ad: RankedLibraryAd) {
@@ -392,7 +375,6 @@ export function LibraryBrowser({
         }`}
       >
         {ads?.map((ad) => {
-          const checked = isSelected(ad.id);
           const added = addedTo(ad.id);
           const bothAdded = REFERENCE_ROLES.every((r) =>
             added.some((a) => a.groupIndex === targetGroup && a.role === r),
@@ -412,7 +394,7 @@ export function LibraryBrowser({
                 }
               }}
               className={`flex cursor-pointer flex-col overflow-hidden rounded-xl border-2 bg-white text-left transition-colors ${
-                bothAdded || checked ? "border-brand" : "border-zinc-200 hover:border-zinc-300"
+                bothAdded ? "border-brand" : "border-zinc-200 hover:border-zinc-300"
               }`}
             >
               <div className="relative bg-zinc-100">
@@ -425,17 +407,18 @@ export function LibraryBrowser({
                 />
                 <button
                   type="button"
-                  aria-label={checked ? "Deselect for bulk add" : "Select for bulk add"}
-                  aria-pressed={checked}
+                  aria-label={bothAdded ? "Remove as style and format" : "Use as style and format"}
+                  aria-pressed={bothAdded}
+                  disabled={addingBoth}
                   onClick={(e) => {
                     e.stopPropagation();
-                    toggle(ad);
+                    void toggleEntire(ad);
                   }}
                   className={`absolute top-2 left-2 flex h-6 w-6 items-center justify-center rounded-md border-2 text-xs text-white ${
-                    checked ? "border-brand bg-brand" : "border-white bg-black/20"
+                    bothAdded ? "border-brand bg-brand" : "border-white bg-black/20"
                   }`}
                 >
-                  {checked && "✓"}
+                  {bothAdded && "✓"}
                 </button>
                 <span className="absolute top-2 right-2">
                   <ScoreBadge metrics={ad.metrics} />
@@ -537,40 +520,6 @@ export function LibraryBrowser({
         </div>
       )}
 
-      {selected.length > 0 && (
-        <div className="sticky bottom-4 mt-5 flex flex-wrap items-center gap-3 rounded-xl border border-zinc-200 bg-white p-3 shadow-lg">
-          <span className="text-sm font-medium">{selected.length} selected</span>
-          <span className="text-sm text-zinc-500">Add as</span>
-          <select
-            className={INLINE_SELECT}
-            value={role}
-            onChange={(e) => setRole(e.target.value as ReferenceRole | "both")}
-          >
-            <option value="both">Style and format</option>
-            {REFERENCE_ROLES.map((r) => (
-              <option key={r} value={r}>
-                {REFERENCE_ROLE_LABELS[r]}s
-              </option>
-            ))}
-          </select>
-          <span className="text-sm text-zinc-500">in</span>
-          <select className={INLINE_SELECT} value={targetGroup} onChange={(e) => setGroupIndex(Number(e.target.value))}>
-            {Array.from({ length: groupCount }, (_, i) => (
-              <option key={i} value={i}>
-                {groupLabel(i)}
-              </option>
-            ))}
-          </select>
-          <div className="ml-auto flex gap-2">
-            <button type="button" onClick={() => setSelected([])} className="btn-secondary">
-              Clear
-            </button>
-            <button type="button" onClick={add} disabled={adding} className="btn-primary">
-              {adding ? "Adding…" : `Add ${selected.length}`}
-            </button>
-          </div>
-        </div>
-      )}
     </section>
   );
 }
