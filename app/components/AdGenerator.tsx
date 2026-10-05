@@ -2058,6 +2058,22 @@ export function AdGenerator({ brand }: { brand: Brand }) {
           onAddGroup={addGroup}
           onRemoveReference={removeReference}
           canAddGroup={groupIds.length < MAX_REFERENCE_GROUPS}
+          onReview={
+            referenceSource === "library" ? () => setStage("review") : undefined
+          }
+          canReview={canReview}
+          reviewStatus={
+            referenceSource === "library"
+              ? referencesMissing.length > 0
+                ? `Still needed: ${referencesMissing.join(", ")}`
+                : totalAds > MAX_TOTAL_ADS
+                  ? `${totalAds} ads is over the ${MAX_TOTAL_ADS} ad limit for one run.`
+                  : `${totalAds} ads (${dimensions.join(", ")}) across ${batches.length} reference group${batches.length === 1 ? "" : "s"}`
+              : undefined
+          }
+          onBack={
+            referenceSource === "library" ? () => setStage("inputs") : undefined
+          }
         />
       )}
 
@@ -2077,7 +2093,10 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                     type="button"
                     role="radio"
                     aria-checked={selected}
-                    onClick={() => setReferenceSource(s.id)}
+                    onClick={() => {
+                      setReferenceSource(s.id);
+                      if (s.id === "library") setCartOpen(true);
+                    }}
                     className={`flex flex-col gap-1 rounded-xl border-2 p-4 text-left transition-colors ${
                       selected
                         ? "border-brand bg-brand/5"
@@ -2104,6 +2123,7 @@ export function AdGenerator({ brand }: { brand: Brand }) {
             />
           )}
 
+          {referenceSource !== "library" && (
           <section className="card">
             <h2 className="section-title mb-1">References *</h2>
             <p className="mb-5 text-sm text-zinc-500">
@@ -2270,16 +2290,19 @@ export function AdGenerator({ brand }: { brand: Brand }) {
               )}
             </div>
 
-            {SHOW_CREATIVE_BREAKDOWN && (
-              <CreativeBreakdownPanel
-                title="Creative breakdown (Step 2 test)"
-                json={stepTwoJson}
-                data={stepTwoBreakdown}
-                brandName={brand.name}
-              />
-            )}
           </section>
+          )}
 
+          {SHOW_CREATIVE_BREAKDOWN && (
+            <CreativeBreakdownPanel
+              title="Creative breakdown (Step 2 test)"
+              json={stepTwoJson}
+              data={stepTwoBreakdown}
+              brandName={brand.name}
+            />
+          )}
+
+          {referenceSource !== "library" && (
           <footer className="flex items-center justify-between gap-4">
             <button
               type="button"
@@ -2304,6 +2327,7 @@ export function AdGenerator({ brand }: { brand: Brand }) {
               Review brief
             </button>
           </footer>
+          )}
         </div>
       )}
 

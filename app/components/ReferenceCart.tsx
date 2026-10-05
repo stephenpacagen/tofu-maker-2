@@ -28,6 +28,10 @@ export function ReferenceCart({
   onAddGroup,
   onRemoveReference,
   canAddGroup,
+  onReview,
+  canReview,
+  reviewStatus,
+  onBack,
 }: {
   open: boolean;
   onOpen: () => void;
@@ -42,6 +46,11 @@ export function ReferenceCart({
   onAddGroup: () => void;
   onRemoveReference: (id: string) => void;
   canAddGroup: boolean;
+  /** Library flow: continue to the brief from the cart instead of the page footer. */
+  onReview?: () => void;
+  canReview?: boolean;
+  reviewStatus?: string;
+  onBack?: () => void;
 }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -196,8 +205,9 @@ export function ReferenceCart({
           })}
         </div>
 
-        {canAddGroup && (
-          <footer className="border-t border-zinc-200 p-4">
+        <footer className="flex flex-col gap-3 border-t border-zinc-200 p-4">
+          {reviewStatus && <p className="text-xs text-zinc-500">{reviewStatus}</p>}
+          {canAddGroup && (
             <button
               type="button"
               onClick={onAddGroup}
@@ -205,8 +215,25 @@ export function ReferenceCart({
             >
               <span className="text-xl leading-none">+</span> Add reference group
             </button>
-          </footer>
-        )}
+          )}
+          {onReview && (
+            <div className="flex items-center gap-2">
+              {onBack && (
+                <button type="button" onClick={onBack} className="btn-secondary">
+                  Back
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onReview}
+                disabled={!canReview}
+                className="btn-primary flex-1"
+              >
+                Review brief
+              </button>
+            </div>
+          )}
+        </footer>
       </aside>
     </div>,
     document.body,
