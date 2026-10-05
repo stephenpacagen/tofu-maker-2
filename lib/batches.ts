@@ -25,9 +25,9 @@ export function splitEvenly(total: number, n: number): number[] {
 }
 
 /**
- * Every reference image in the group gets `variations` outputs. When a group
- * has both style and format references, each style/format pairing gets that many.
- * A group with a single image uses that image for both style and layout.
+ * Pairs references into generations. One image covers both roles. When a group
+ * has both roles, each generation gets one style and one format, paired in
+ * order. The shorter list repeats so every reference is used.
  */
 function planGroupJobs(refs: BriefReference[], variations: number): BatchJob[] {
   if (refs.length === 1) {
@@ -38,16 +38,32 @@ function planGroupJobs(refs: BriefReference[], variations: number): BatchJob[] {
   const styles = refs.filter((r) => r.role === "style");
   const formats = refs.filter((r) => r.role === "format");
 
-  const jobs: BatchJob[] =
-    styles.length === 0
-      ? formats.map((format) => ({ style: null, format, count: variations }))
-      : formats.length === 0
-        ? styles.map((style) => ({ style, format: null, count: variations }))
-        : styles.flatMap((style) => formats.map((format) => ({ style, format, count: variations })));
-  return jobs.filter((j) => j.count > 0);
+  if (styles.length === 0) return formats.map((format) => ({ style: null, format, count: variations }));
+  if (formats.length === 0) return styles.map((style) => ({ style, format: null, count: variations }));
+
+  const count = Math.max(styles.length, formats.length);
+  return Array.from({ length: count }, (_, i) => ({
+    style: styles[i % styles.length],
+    format: formats[i % formats.length],
+    count: variations,
+  })).filter((j) => j.count > 0);
 }
 
-/** Each non-empty reference group is a batch. `targetAds` is variations per reference image, not a run total. */
+/**
+ * A single reference can stand in for both roles. Any other group needs at
+ * least one style reference and one format reference.
+ */
+export function pairGap(refs: { role: BriefReference["role"] }[]): "both" | "style" | "format" | null {
+  if (refs.length === 0) return "both";
+  if (refs.length === 1) return null;
+  const hasStyle = refs.some((r) => r.role === "style");
+  const hasFormat = refs.some((r) => r.role === "format");
+  if (!hasStyle) return "style";
+  if (!hasFormat) return "format";
+  return null;
+}
+
+/** Each reference group is a batch. `targetAds` is variations per style/format pair. */
 export function planBatches(brief: Pick<AdBrief, "references" | "referenceGroups" | "targetAds">): Batch[] {
   const groups = brief.referenceGroups
     .map((g, index) => ({ ...g, index, refs: brief.references.filter((r) => r.groupId === g.id) }))

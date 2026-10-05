@@ -75,6 +75,7 @@ export const BRANDS: Brand[] = [
         id: "hair-revival-serum",
         sku: "HAIR",
         name: "Dual-Path Hair Revival Serum",
+        image: "/images/reyou-hair-serum.png",
       },
       {
         id: "brow-serum",

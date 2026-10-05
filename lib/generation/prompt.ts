@@ -12,6 +12,15 @@ const STYLE_GUIDE =
   "palette, lighting, texture, mood, and if it is animated or cartoony, its art style";
 const LAYOUT_GUIDE = "framing, composition, and element placement";
 
+/** Keep the brand name off the image unless the brief asks for it. Product packaging stays as photographed. */
+function brandMarkLines(brand: string) {
+  const word = `"${brand}"`;
+  return {
+    early: `Do not add a ${brand} logo, wordmark, or the word ${word} anywhere in the image, including by copying either from a reference image. Branding already printed on the product photograph stays as photographed. Add the logo or the word only when the requested copy or a note below explicitly asks for it.`,
+    required: `Required: do not place a ${brand} logo or the word ${word} in the image unless the requested copy, a note above, or further instructions explicitly ask for it. Branding already printed on the product photograph stays as photographed.`,
+  };
+}
+
 /** One uploaded image is filling both roles, so it is attached only once. */
 export function referenceCoversBoth(inputs: Pick<PromptInputs, "format" | "style">) {
   return !!inputs.format && !!inputs.style && inputs.format.id === inputs.style.id;
@@ -125,11 +134,8 @@ export function buildPrompt(brief: AdBrief, inputs: PromptInputs, dimension: Dim
   }
 
   lines.push("Do not include any other company's logos or trademarks.");
-  if (brief.brand === "Pacagen") {
-    lines.push(
-      'Do not add a Pacagen logo, wordmark, or the word "Pacagen" anywhere in the image, including by copying either from a reference image. Branding already printed on the product photograph stays as photographed. Add the logo or the word only when the requested copy or a note below explicitly asks for it.',
-    );
-  }
+  const brandMark = brandMarkLines(brief.brand);
+  lines.push(brandMark.early);
 
   if (referenceCoversBoth(inputs)) {
     const notes = inputs.format?.prompt.trim();
@@ -151,11 +157,7 @@ export function buildPrompt(brief: AdBrief, inputs: PromptInputs, dimension: Dim
     );
   }
 
-  if (brief.brand === "Pacagen") {
-    lines.push(
-      'Required: do not place a Pacagen logo or the word "Pacagen" in the image unless the requested copy, a note above, or further instructions explicitly ask for it. Branding already printed on the product photograph stays as photographed.',
-    );
-  }
+  lines.push(brandMark.required);
 
   return lines.join("\n");
 }

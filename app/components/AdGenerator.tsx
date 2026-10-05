@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { countAds, planBatches, splitEvenly, type Batch } from "@/lib/batches";
+import { countAds, pairGap, planBatches, splitEvenly, type Batch } from "@/lib/batches";
 import { zipFolder } from "@/lib/zip-folder";
 import type { Brand } from "@/lib/brands";
 import { toInputBreakdown, toReferenceBreakdown } from "@/lib/breakdown";
@@ -39,11 +39,15 @@ import {
 import { DropZone } from "./DropZone";
 import { LibraryBrowser } from "./LibraryBrowser";
 import { ProductPicker } from "./ProductPicker";
+import { ReferenceCart } from "./ReferenceCart";
 import {
   ReferenceCard,
   ScoreBadge,
   type ReferenceDraft,
 } from "./ReferenceCard";
+
+/** Developer-only JSON panels on Creative input and References. Flip this to show them. */
+const SHOW_CREATIVE_BREAKDOWN = false;
 
 type Stage = "inputs" | "references" | "review" | "results";
 
@@ -1016,6 +1020,7 @@ async function fetchAsFile(
 
 export function AdGenerator({ brand }: { brand: Brand }) {
   const [stage, setStage] = useState<Stage>("inputs");
+  const [cartOpen, setCartOpen] = useState(false);
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });
   }, [stage]);
@@ -1118,12 +1123,15 @@ export function AdGenerator({ brand }: { brand: Brand }) {
   const stepTwoBreakdown = toReferenceBreakdown(brief, brand.id);
   const stepTwoJson = JSON.stringify(stepTwoBreakdown, null, 2);
 
-  const emptyGroups = groups
-    .map((g, i) =>
-      references.some((r) => r.groupId === g.id)
-        ? null
-        : g.name.trim() || `Reference group ${i + 1}`,
-    )
+  const referencesMissing = groups
+    .map((g, i) => {
+      const name = g.name.trim() || `Reference group ${i + 1}`;
+      const gap = pairGap(references.filter((r) => r.groupId === g.id));
+      if (gap === "both") return `a style reference and a format reference in ${name}`;
+      if (gap === "style") return `a style reference in ${name}`;
+      if (gap === "format") return `a format reference in ${name}`;
+      return null;
+    })
     .filter((n) => n !== null);
   const variationsNumber = /^\d+$/.test(variationsText)
     ? Number(variationsText)
@@ -1137,10 +1145,6 @@ export function AdGenerator({ brand }: { brand: Brand }) {
     dimensions.length === 0 && "a dimension",
     (variationsNumber === null || variationsOutOfRange) &&
       `variations from ${MIN_VARIATIONS_PER_REFERENCE} to ${MAX_VARIATIONS_PER_REFERENCE}`,
-  ].filter(Boolean);
-  const referencesMissing = [
-    emptyGroups.length > 0 &&
-      `a style or format reference in reference group${emptyGroups.length > 1 ? "s" : ""} ${emptyGroups.join(", ")}`,
   ].filter(Boolean);
   const canReview =
     inputsMissing.length === 0 &&
@@ -1197,6 +1201,7 @@ export function AdGenerator({ brand }: { brand: Brand }) {
         source: "upload",
       }));
     setReferences((prev) => [...prev, ...drafts]);
+    if (drafts.length > 0) setCartOpen(true);
   }
 
   async function addLibraryAds(
@@ -1238,7 +1243,9 @@ export function AdGenerator({ brand }: { brand: Brand }) {
         };
       }),
     );
-    setReferences((prev) => [...prev, ...drafts.filter((d) => d !== null)]);
+    const added = drafts.filter((d) => d !== null);
+    setReferences((prev) => [...prev, ...added]);
+    if (added.length > 0) setCartOpen(true);
   }
 
   function libraryUsage(adId: string) {
@@ -2000,12 +2007,14 @@ export function AdGenerator({ brand }: { brand: Brand }) {
               </div>
             </div>
 
-            <CreativeBreakdownPanel
-              title="Creative breakdown (Step 1 test)"
-              json={stepOneJson}
-              data={stepOneBreakdown}
-              brandName={brand.name}
-            />
+            {SHOW_CREATIVE_BREAKDOWN && (
+              <CreativeBreakdownPanel
+                title="Creative breakdown (Step 1 test)"
+                json={stepOneJson}
+                data={stepOneBreakdown}
+                brandName={brand.name}
+              />
+            )}
           </section>
 
           <footer className="flex items-center justify-between">
@@ -2024,6 +2033,32 @@ export function AdGenerator({ brand }: { brand: Brand }) {
             </button>
           </footer>
         </div>
+      )}
+
+      {stage === "references" && (
+        <ReferenceCart
+          open={cartOpen}
+          onOpen={() => setCartOpen(true)}
+          onClose={() => setCartOpen(false)}
+          brandColor={brand.color}
+          groups={groups}
+          references={references.map((r) => ({
+            id: r.id,
+            groupId: r.groupId,
+            role: r.role,
+            previewUrl: r.previewUrl,
+            label: r.sourcedFrom ?? r.file.name,
+          }))}
+          adCountFor={(groupId) =>
+            (batches.find((b) => b.id === groupId)?.count ?? 0) * dimensions.length
+          }
+          onRenameGroup={renameGroup}
+          onDescribeGroup={setGroupDescription}
+          onRemoveGroup={removeGroup}
+          onAddGroup={addGroup}
+          onRemoveReference={removeReference}
+          canAddGroup={groupIds.length < MAX_REFERENCE_GROUPS}
+        />
       )}
 
       {stage === "references" && (
@@ -2072,10 +2107,10 @@ export function AdGenerator({ brand }: { brand: Brand }) {
           <section className="card">
             <h2 className="section-title mb-1">References *</h2>
             <p className="mb-5 text-sm text-zinc-500">
-              Each reference group generates its own batch. Write a description
-              for that reference group, then give it at least one style or
-              format reference. Every reference image gets the number of
-              variations you set.
+              Each generation uses one style reference and one format
+              reference. A single image can cover both. If you add more, they
+              pair in order and the shorter list is reused. Each pair gets the
+              number of variations you set.
             </p>
 
             <div className="flex flex-col gap-4">
@@ -2235,12 +2270,14 @@ export function AdGenerator({ brand }: { brand: Brand }) {
               )}
             </div>
 
-            <CreativeBreakdownPanel
-              title="Creative breakdown (Step 2 test)"
-              json={stepTwoJson}
-              data={stepTwoBreakdown}
-              brandName={brand.name}
-            />
+            {SHOW_CREATIVE_BREAKDOWN && (
+              <CreativeBreakdownPanel
+                title="Creative breakdown (Step 2 test)"
+                json={stepTwoJson}
+                data={stepTwoBreakdown}
+                brandName={brand.name}
+              />
+            )}
           </section>
 
           <footer className="flex items-center justify-between gap-4">

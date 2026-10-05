@@ -1,4 +1,4 @@
-import { countAds, planBatches } from "@/lib/batches";
+import { countAds, pairGap, planBatches } from "@/lib/batches";
 import { BRANDS } from "@/lib/brands";
 import { toReferenceBreakdown } from "@/lib/breakdown";
 import { buildPrompt, getGenerator, referenceCoversBoth, type ImageInput } from "@/lib/generation";
@@ -52,8 +52,17 @@ function validateBrief(brief: AdBrief): string | null {
     return `Use at most ${MAX_REFERENCE_GROUPS} reference groups`;
   const groupIds = new Set(brief.referenceGroups.map((g) => g.id));
   if (brief.references.some((r) => !groupIds.has(r.groupId))) return "Reference belongs to an unknown group";
-  const emptyGroup = brief.referenceGroups.findIndex((g) => !brief.references.some((r) => r.groupId === g.id));
-  if (emptyGroup !== -1) return `Group ${emptyGroup + 1} needs at least one style or format reference`;
+  const incomplete = brief.referenceGroups.findIndex((g) => {
+    const refs = brief.references.filter((r) => r.groupId === g.id);
+    return pairGap(refs) !== null;
+  });
+  if (incomplete !== -1) {
+    const refs = brief.references.filter((r) => r.groupId === brief.referenceGroups[incomplete].id);
+    const gap = pairGap(refs);
+    const need =
+      gap === "both" ? "a style reference and a format reference" : `a ${gap} reference`;
+    return `Group ${incomplete + 1} needs ${need}`;
+  }
   if (
     !Number.isInteger(brief.targetAds) ||
     brief.targetAds < MIN_VARIATIONS_PER_REFERENCE ||

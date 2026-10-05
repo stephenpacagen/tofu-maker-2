@@ -93,6 +93,12 @@ export function LibraryBrowser({
   const groupCount = groupNames.length;
   const groupLabel = (i: number) => groupNames[i]?.trim() || `Reference group ${i + 1}`;
   const targetGroup = Math.min(groupIndex, groupCount - 1);
+  const seenGroupCount = useRef(groupCount);
+  // A new group is the one you just asked for, so the next library add goes there.
+  useEffect(() => {
+    if (groupCount > seenGroupCount.current) setGroupIndex(groupCount - 1);
+    seenGroupCount.current = groupCount;
+  }, [groupCount]);
 
   async function loadAds({
     brandId,
@@ -360,7 +366,7 @@ export function LibraryBrowser({
           ) : (
             <span className="font-medium text-zinc-900">{groupLabel(0)}</span>
           )}
-          <span className="text-xs text-zinc-400">Use + Style or + Format on a card, or select several below.</span>
+          <span className="text-xs text-zinc-400">Add one style reference and one format reference.</span>
         </div>
       )}
 
@@ -469,15 +475,8 @@ export function LibraryBrowser({
                     );
                   })}
                 </div>
-                <div className="flex items-center justify-between gap-2 text-[11px]">
-                  {added.length > 0 ? (
-                    <span className="text-brand">
-                      In {added.map((a) => `${groupLabel(a.groupIndex)} ${a.role}`).join(", ")}
-                    </span>
-                  ) : (
-                    <span />
-                  )}
-                  {ad.sourceUrl && (
+                {ad.sourceUrl && (
+                  <div className="flex justify-end text-[11px]">
                     <a
                       href={ad.sourceUrl}
                       target="_blank"
@@ -487,8 +486,8 @@ export function LibraryBrowser({
                     >
                       View source
                     </a>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             </div>
           );
