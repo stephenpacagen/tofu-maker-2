@@ -145,7 +145,7 @@ export function toReferenceBreakdown(brief: AdBrief, brandId: string): Reference
     return {
       reference_group: index + 1,
       name: group.name?.trim() || `Reference group ${index + 1}`,
-      keywords: group.keywords?.length ? group.keywords : brief.keywords,
+      keywords: group.keywords ?? [],
       style_references: refs.filter((r) => r.role === "style").map(summarize),
       format_references: refs.filter((r) => r.role === "format").map(summarize),
     };

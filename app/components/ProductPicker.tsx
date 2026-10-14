@@ -32,7 +32,7 @@ function ProductPhoto({ product, file }: { product: Product; file?: File }) {
     <img
       src={src}
       alt={product.name}
-      className="h-14 w-14 shrink-0 rounded-lg bg-zinc-100 object-cover"
+      className="h-14 w-14 shrink-0 rounded-lg bg-zinc-100 object-contain"
     />
   );
 }

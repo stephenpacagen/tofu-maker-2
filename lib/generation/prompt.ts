@@ -13,6 +13,15 @@ const STYLE_GUIDE =
   "palette, lighting, texture, mood, and if it is animated or cartoony, its art style";
 const LAYOUT_GUIDE = "framing, composition, and element placement";
 
+/** Keep the brand name off the image unless the brief asks for it. Product packaging stays as photographed. */
+function brandMarkLines(brand: string) {
+  const word = `"${brand}"`;
+  return {
+    early: `Do not add a ${brand} logo, wordmark, or the word ${word} anywhere in the image, including by copying either from a reference image. Branding already printed on the product photograph stays as photographed. Add the logo or the word only when the requested copy or a note below explicitly asks for it.`,
+    required: `Required: do not place a ${brand} logo or the word ${word} in the image unless the requested copy, a note above, or further instructions explicitly ask for it. Branding already printed on the product photograph stays as photographed.`,
+  };
+}
+
 /** One uploaded image is filling both roles, so it is attached only once. */
 export function referenceCoversBoth(inputs: Pick<PromptInputs, "format" | "style">) {
   return !!inputs.format && !!inputs.style && inputs.format.id === inputs.style.id;
@@ -66,6 +75,37 @@ function imageGuide({ format, style, productPhotoCount }: PromptInputs) {
   return lines;
 }
 
+/** Product facts, palette, and claims rules for the selected SKU. */
+function productLines(brief: AdBrief) {
+  const brand = BRANDS.find((item) => item.name === brief.brand);
+  if (!brand) return [];
+  const lines: string[] = [];
+  for (const selected of brief.products) {
+    const product = brand.products.find((item) => item.id === selected.id);
+    if (!product) continue;
+    const facts = [
+      product.positioning,
+      product.ingredients && `Ingredients: ${product.ingredients}`,
+      product.results &&
+        `Study findings to cite only as results versus placebo, never as a promise: ${product.results}`,
+    ].filter((fact): fact is string => Boolean(fact));
+    if (facts.length > 0) lines.push(`About "${product.name}": ${facts.join(" ")}`);
+    if (product.colors) {
+      const { dark, medium, light } = product.colors;
+      lines.push(
+        `Color the ad around the product with this palette: dark ${dark}, medium ${medium}, light ${light}. Leave the product photograph's own colors unchanged.`,
+      );
+    }
+  }
+  if (brand.claims) {
+    lines.push(
+      `When the ad makes a claim, use wording like: ${brand.claims.use.join(", ")}. You may lead with: ${brand.claims.leadWith.join("; ")}.`,
+    );
+    lines.push(brand.claims.avoid.join(" "));
+  }
+  return lines;
+}
+
 export function buildPrompt(brief: AdBrief, inputs: PromptInputs, dimension: Dimension) {
   const productNames = brief.products.map((p) => `"${p.name}"`).join(" and ");
   const lines = [
@@ -85,7 +125,7 @@ export function buildPrompt(brief: AdBrief, inputs: PromptInputs, dimension: Dim
   const groupId = inputs.format?.groupId ?? inputs.style?.groupId;
   const group = groupId ? brief.referenceGroups.find((g) => g.id === groupId) : undefined;
   const description = group?.description?.trim();
-  const keywords = group?.keywords?.length ? group.keywords : brief.keywords;
+  const keywords = group?.keywords ?? [];
   if (description) lines.push(`Description: ${description}`);
   else if (keywords.length > 0) lines.push(`Description: ${keywords.join("; ")}.`);
 
@@ -103,6 +143,8 @@ export function buildPrompt(brief: AdBrief, inputs: PromptInputs, dimension: Dim
       lines.push(parts.join("\n"));
     }
   }
+
+  lines.push(...productLines(brief));
 
   const fonts = BRANDS.find((brand) => brand.name === brief.brand)?.fonts;
   if (fonts) {
@@ -128,11 +170,8 @@ export function buildPrompt(brief: AdBrief, inputs: PromptInputs, dimension: Dim
   if (dimension === "9x16") lines.push(textSafeZonePrompt());
 
   lines.push("Do not include any other company's logos or trademarks.");
-  if (brief.brand === "Pacagen") {
-    lines.push(
-      'Do not add a Pacagen logo, wordmark, or the word "Pacagen" anywhere in the image, including by copying either from a reference image. Branding already printed on the product photograph stays as photographed. Add the logo or the word only when the requested copy or a note below explicitly asks for it.',
-    );
-  }
+  const brandMark = brandMarkLines(brief.brand);
+  lines.push(brandMark.early);
 
   if (referenceCoversBoth(inputs)) {
     const notes = inputs.format?.prompt.trim();
@@ -154,11 +193,7 @@ export function buildPrompt(brief: AdBrief, inputs: PromptInputs, dimension: Dim
     );
   }
 
-  if (brief.brand === "Pacagen") {
-    lines.push(
-      'Required: do not place a Pacagen logo or the word "Pacagen" in the image unless the requested copy, a note above, or further instructions explicitly ask for it. Branding already printed on the product photograph stays as photographed.',
-    );
-  }
+  lines.push(brandMark.required);
 
   return lines.join("\n");
 }
