@@ -110,6 +110,7 @@ export const BRANDS: Brand[] = [
     name: "Wildtype",
     color: "#13355F",
     website: "https://drinkwildtype.com",
+    fonts: { title: "All Round Gothic", text: "Buvera" },
     claims: {
       use: ["supports", "designed to", "fuels", "made for", "may help", "clinically studied to"],
       leadWith: [
