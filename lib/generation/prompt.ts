@@ -1,6 +1,7 @@
 import { summarizeLandingPage } from "@/lib/breakdown";
 import { BRANDS } from "@/lib/brands";
 import type { AdBrief, BriefReference, Dimension } from "@/lib/types";
+import { textSafeZonePrompt } from "./safe-zone";
 
 export type PromptInputs = {
   format: BriefReference | null;
@@ -124,6 +125,8 @@ export function buildPrompt(brief: AdBrief, inputs: PromptInputs, dimension: Dim
     );
   }
 
+  if (dimension === "9x16") lines.push(textSafeZonePrompt());
+
   lines.push("Do not include any other company's logos or trademarks.");
   if (brief.brand === "Pacagen") {
     lines.push(
@@ -181,13 +184,34 @@ export function buildRegeneratePrompt(
   return lines.join("\n");
 }
 
+/** A later edit of an ad that was already regenerated. Only the latest image and this request. */
+export function buildFollowUpPrompt(instruction: string, dimension: Dimension, extraImageCount: number) {
+  const lines = [
+    "Revise the attached image. Change only what the instruction asks for, and keep everything else in the image the same.",
+    `Aspect ratio: ${dimension.replace("x", ":")}.`,
+    "Image 1 is the image to revise.",
+  ];
+  if (extraImageCount === 1) lines.push("Image 2 is an additional image supplied with this request.");
+  else if (extraImageCount > 1) lines.push(`Images 2-${1 + extraImageCount} are additional images supplied with this request.`);
+  lines.push(`Instruction: ${instruction.trim()}`);
+  return lines.join("\n");
+}
+
 /** Asks the model to reframe an already-generated ad into another size. */
 export function buildResizePrompt(dimension: Dimension) {
   const ratio = dimension.replace("x", ":");
-  return [
+  const lines = [
     `Keep all the elements of this image, just resize it to ${dimension} (${ratio}).`,
     "The image itself must become that shape and fill the frame.",
     "Do not add padding, borders, letterboxing, or a blurred background.",
-    "Do not add, remove, or rearrange elements, and do not change the copy, colors, or subjects.",
-  ].join(" ");
+  ];
+  if (dimension === "9x16") {
+    lines.push(
+      "Keep the subjects, colors, and copy. You may resize, wrap, or reposition text so it fits the safe zone below. Do not otherwise rearrange the image.",
+    );
+    lines.push(textSafeZonePrompt());
+  } else {
+    lines.push("Do not add, remove, or rearrange elements, and do not change the copy, colors, or subjects.");
+  }
+  return lines.join(" ");
 }

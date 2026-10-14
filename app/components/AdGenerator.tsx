@@ -305,6 +305,7 @@ function ResultFigure({
 
 function RegenerateDialog({
   imageUrl,
+  imageNote,
   variation,
   dimension,
   instruction,
@@ -317,6 +318,7 @@ function RegenerateDialog({
   onSubmit,
 }: {
   imageUrl: string;
+  imageNote?: string;
   variation: number;
   dimension: Dimension;
   instruction: string;
@@ -358,6 +360,9 @@ function RegenerateDialog({
           alt={`${dimension} variation ${variation}`}
           className="mx-auto max-h-[50vh] w-auto max-w-full rounded-lg bg-zinc-100 object-contain"
         />
+        {imageNote && (
+          <p className="text-center text-sm text-zinc-500">{imageNote}</p>
+        )}
         <label className="flex flex-col gap-1 text-sm text-zinc-700">
           Further instructions
           <textarea
@@ -1056,6 +1061,7 @@ export function AdGenerator({ brand }: { brand: Brand }) {
     new Set(),
   );
   const [regenEditor, setRegenEditor] = useState<{
+    id: string;
     key: string;
     dimension: Dimension;
     imageUrl: string;
@@ -1579,18 +1585,21 @@ export function AdGenerator({ brand }: { brand: Brand }) {
     });
     const runId = ctx.id;
     try {
+      const followUp = Boolean(originals[shown.id]);
       const file = await dataUrlToFile(
         shown.imageUrl,
         `variation-${shown.variation}.png`,
       );
       const files: { name: string; file: File }[] = [{ name: "image", file }];
-      for (const refId of [shown.styleRefId, shown.formatRefId]) {
-        const reference = refId ? ctx.referenceFiles.get(refId) : undefined;
-        if (refId && reference)
-          files.push({ name: `reference:${refId}`, file: reference });
-      }
-      for (const [productId, productFile] of ctx.productFiles) {
-        files.push({ name: `product:${productId}`, file: productFile });
+      if (!followUp) {
+        for (const refId of [shown.styleRefId, shown.formatRefId]) {
+          const reference = refId ? ctx.referenceFiles.get(refId) : undefined;
+          if (refId && reference)
+            files.push({ name: `reference:${refId}`, file: reference });
+        }
+        for (const [productId, productFile] of ctx.productFiles) {
+          files.push({ name: `product:${productId}`, file: productFile });
+        }
       }
       if (regenExtra) files.push({ name: "extra", file: regenExtra });
       const generated = await postImageJob(
@@ -1600,8 +1609,9 @@ export function AdGenerator({ brand }: { brand: Brand }) {
           options: JSON.stringify(ctx.options),
           dimension: targetDimension,
           instruction,
-          styleRefId: shown.styleRefId ?? "",
-          formatRefId: shown.formatRefId ?? "",
+          followUp: followUp ? "1" : "0",
+          styleRefId: followUp ? "" : (shown.styleRefId ?? ""),
+          formatRefId: followUp ? "" : (shown.formatRefId ?? ""),
         },
         files,
       );
@@ -2638,10 +2648,11 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                                         showingOriginal.has(vKey),
                                       onOpenForm: () => {
                                         setRegenEditor({
+                                          id: ad.id,
                                           key: vKey,
                                           dimension: ad.dimension,
-                                          imageUrl: shown.imageUrl,
-                                          variation: shown.variation,
+                                          imageUrl: ad.imageUrl,
+                                          variation: ad.variation,
                                         });
                                         setRegenInstruction("");
                                         setRegenOthers(true);
@@ -2729,6 +2740,11 @@ export function AdGenerator({ brand }: { brand: Brand }) {
           {regenEditor && (
             <RegenerateDialog
               imageUrl={regenEditor.imageUrl}
+              imageNote={
+                originals[regenEditor.id]
+                  ? "Editing the latest image only."
+                  : undefined
+              }
               variation={regenEditor.variation}
               dimension={regenEditor.dimension}
               instruction={regenInstruction}
@@ -2745,10 +2761,7 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                     item.dimension === regenEditor.dimension,
                 );
                 if (!ad) return;
-                void regenerateVariation({
-                  ...displayAd(ad),
-                  imageUrl: regenEditor.imageUrl,
-                });
+                void regenerateVariation({ ...ad, imageUrl: ad.imageUrl });
               }}
             />
           )}

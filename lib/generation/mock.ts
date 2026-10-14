@@ -15,9 +15,9 @@ const HUES = [210, 330, 30, 150, 270, 0];
  */
 export const mockGenerator: AdGenerator = {
   name: "mock",
-  async generate({ styleImage, formatImage, dimension, count }) {
+  async generate({ styleImage, formatImage, revisionImage, dimension, count }) {
     const [w, h] = SIZES[dimension];
-    const base = (styleImage ?? formatImage)!;
+    const base = (revisionImage ?? styleImage ?? formatImage)!;
     const refHref = `data:${base.type};base64,${Buffer.from(base.bytes).toString("base64")}`;
 
     const urls = Array.from({ length: count }, (_, i) => {
