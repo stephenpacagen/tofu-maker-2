@@ -1158,7 +1158,7 @@ export function AdGenerator({ brand }: { brand: Brand }) {
       {
         id: crypto.randomUUID(),
         name: `Reference group ${prev.length + 1}`,
-        description: prev[prev.length - 1]?.description ?? "",
+        description: "",
       },
     ]);
   }

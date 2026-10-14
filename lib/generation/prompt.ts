@@ -74,6 +74,37 @@ function imageGuide({ format, style, productPhotoCount }: PromptInputs) {
   return lines;
 }
 
+/** Product facts, palette, and claims rules for the selected SKU. */
+function productLines(brief: AdBrief) {
+  const brand = BRANDS.find((item) => item.name === brief.brand);
+  if (!brand) return [];
+  const lines: string[] = [];
+  for (const selected of brief.products) {
+    const product = brand.products.find((item) => item.id === selected.id);
+    if (!product) continue;
+    const facts = [
+      product.positioning,
+      product.ingredients && `Ingredients: ${product.ingredients}`,
+      product.results &&
+        `Study findings to cite only as results versus placebo, never as a promise: ${product.results}`,
+    ].filter((fact): fact is string => Boolean(fact));
+    if (facts.length > 0) lines.push(`About "${product.name}": ${facts.join(" ")}`);
+    if (product.colors) {
+      const { dark, medium, light } = product.colors;
+      lines.push(
+        `Color the ad around the product with this palette: dark ${dark}, medium ${medium}, light ${light}. Leave the product photograph's own colors unchanged.`,
+      );
+    }
+  }
+  if (brand.claims) {
+    lines.push(
+      `When the ad makes a claim, use wording like: ${brand.claims.use.join(", ")}. You may lead with: ${brand.claims.leadWith.join("; ")}.`,
+    );
+    lines.push(brand.claims.avoid.join(" "));
+  }
+  return lines;
+}
+
 export function buildPrompt(brief: AdBrief, inputs: PromptInputs, dimension: Dimension) {
   const productNames = brief.products.map((p) => `"${p.name}"`).join(" and ");
   const lines = [
@@ -93,7 +124,7 @@ export function buildPrompt(brief: AdBrief, inputs: PromptInputs, dimension: Dim
   const groupId = inputs.format?.groupId ?? inputs.style?.groupId;
   const group = groupId ? brief.referenceGroups.find((g) => g.id === groupId) : undefined;
   const description = group?.description?.trim();
-  const keywords = group?.keywords?.length ? group.keywords : brief.keywords;
+  const keywords = group?.keywords ?? [];
   if (description) lines.push(`Description: ${description}`);
   else if (keywords.length > 0) lines.push(`Description: ${keywords.join("; ")}.`);
 
@@ -111,6 +142,8 @@ export function buildPrompt(brief: AdBrief, inputs: PromptInputs, dimension: Dim
       lines.push(parts.join("\n"));
     }
   }
+
+  lines.push(...productLines(brief));
 
   const fonts = BRANDS.find((brand) => brand.name === brief.brand)?.fonts;
   if (fonts) {
