@@ -1,4 +1,4 @@
-import { buildRegeneratePrompt, getGenerator, referenceCoversBoth, type ImageInput } from "@/lib/generation";
+import { buildFollowUpPrompt, buildRegeneratePrompt, getGenerator, referenceCoversBoth, type ImageInput } from "@/lib/generation";
 import {
   GEMINI_IMAGE_SIZES,
   IMAGE_QUALITIES,
@@ -29,14 +29,16 @@ function validateOptions(options: GenerationOptions): string | null {
 }
 
 /**
- * Regenerates one ad. The model receives the original style, format, and product
- * images, the current ad, an optional extra image, and the same brief context.
+ * Regenerates one ad.
+ * The first regeneration includes the original brief, references, and product photos.
+ * Later regenerations send only the latest image, the new instruction, and any extra image.
  */
 export async function POST(request: Request) {
   let dimension: Dimension;
   let options: GenerationOptions;
-  let brief: AdBrief;
+  let brief: AdBrief | undefined;
   let instruction: string;
+  let followUp = false;
   let styleRefId: string | null;
   let formatRefId: string | null;
   let form: FormData;
@@ -44,7 +46,9 @@ export async function POST(request: Request) {
     form = await request.formData();
     dimension = String(form.get("dimension")) as Dimension;
     options = JSON.parse(String(form.get("options")));
-    brief = JSON.parse(String(form.get("brief")));
+    followUp = form.get("followUp") === "1";
+    const briefRaw = form.get("brief");
+    brief = briefRaw ? (JSON.parse(String(briefRaw)) as AdBrief) : undefined;
     instruction = String(form.get("instruction") ?? "").trim();
     styleRefId = String(form.get("styleRefId") ?? "") || null;
     formatRefId = String(form.get("formatRefId") ?? "") || null;
@@ -66,13 +70,51 @@ export async function POST(request: Request) {
   }
   const invalid = validateOptions(options);
   if (invalid) return Response.json({ error: invalid } satisfies RegenerateResponse, { status: 400 });
-  if (!brief?.brand || !Array.isArray(brief.products)) {
+  if (!followUp && (!brief?.brand || !Array.isArray(brief.products))) {
     return Response.json({ error: "Missing brief" } satisfies RegenerateResponse, { status: 400 });
   }
 
   try {
-    const style = styleRefId ? brief.references.find((r) => r.id === styleRefId) : undefined;
-    const format = formatRefId ? brief.references.find((r) => r.id === formatRefId) : undefined;
+    const revisionImage = await toImageInput(form.get("image"));
+    if (!revisionImage) throw new Error("Missing image to regenerate");
+    const extraImages: ImageInput[] = [];
+    for (const value of form.getAll("extra")) {
+      const image = await toImageInput(value);
+      if (image) extraImages.push(image);
+    }
+
+    if (followUp) {
+      const prompt = buildFollowUpPrompt(instruction, dimension, extraImages.length);
+      const generator = getGenerator(options.model);
+      const { urls, failures } = await generator.generate({
+        brief: brief ?? {
+          brand: "",
+          products: [],
+          productVisibility: "none",
+          dimensions: [dimension],
+          keywords: [],
+          targetAds: 1,
+          copyMode: "separate",
+          copy: "",
+          landingPages: [],
+          referenceGroups: [],
+          references: [],
+        },
+        revisionImage,
+        extraImages,
+        productImages: [],
+        dimension,
+        count: 1,
+        prompt,
+        options,
+      });
+      const imageUrl = urls[0];
+      if (!imageUrl) throw new Error(failures[0] ?? "Regeneration returned no image");
+      return Response.json({ imageUrl, prompt, failures } satisfies RegenerateResponse);
+    }
+
+    const style = styleRefId ? brief!.references.find((r) => r.id === styleRefId) : undefined;
+    const format = formatRefId ? brief!.references.find((r) => r.id === formatRefId) : undefined;
     if (styleRefId && !style) throw new Error("Unknown style reference");
     if (formatRefId && !format) throw new Error("Unknown format reference");
 
@@ -84,23 +126,15 @@ export async function POST(request: Request) {
     if (format && !formatImage) throw new Error(`Missing image for format reference ${format.fileName}`);
 
     const productImages: ImageInput[] = [];
-    if (brief.productVisibility === "secondary") {
-      for (const p of brief.products) {
+    if (brief!.productVisibility === "secondary") {
+      for (const p of brief!.products) {
         const image = await toImageInput(form.get(`product:${p.id}`));
         if (image) productImages.push(image);
       }
     }
 
-    const revisionImage = await toImageInput(form.get("image"));
-    if (!revisionImage) throw new Error("Missing image to regenerate");
-    const extraImages: ImageInput[] = [];
-    for (const value of form.getAll("extra")) {
-      const image = await toImageInput(value);
-      if (image) extraImages.push(image);
-    }
-
     const prompt = buildRegeneratePrompt(
-      brief,
+      brief!,
       { format: format ?? null, style: style ?? null, productPhotoCount: productImages.length },
       instruction,
       dimension,
@@ -108,7 +142,7 @@ export async function POST(request: Request) {
     );
     const generator = getGenerator(options.model);
     const { urls, failures } = await generator.generate({
-      brief,
+      brief: brief!,
       formatImage,
       styleImage,
       productImages,
