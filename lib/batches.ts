@@ -76,7 +76,7 @@ export function planBatches(
       {
         id: brief.referenceGroups[0]?.id ?? "landing-page",
         index: 0,
-        name: brief.landingPages[0]?.title.trim() || "Landing page reference",
+        name: brief.landingPages?.[0]?.title.trim() || "Landing page reference",
         count: brief.targetAds,
         jobs: [{ style: null, format: null, count: brief.targetAds }],
       },
@@ -115,6 +115,18 @@ export function planBatches(
 }
 
 /** Total images produced: every ad is exported in each selected dimension. */
-export function countAds(brief: Pick<AdBrief, "references" | "referenceGroups" | "targetAds" | "dimensions">) {
+export function countAds(
+  brief: Pick<
+    AdBrief,
+    | "references"
+    | "referenceGroups"
+    | "targetAds"
+    | "dimensions"
+    | "formatMode"
+    | "genericFormatId"
+    | "landingPageAsReference"
+    | "landingPages"
+  >,
+) {
   return planBatches(brief).reduce((sum, b) => sum + b.count, 0) * brief.dimensions.length;
 }
