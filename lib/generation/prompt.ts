@@ -1,5 +1,6 @@
 import { summarizeLandingPage } from "@/lib/breakdown";
 import { BRANDS } from "@/lib/brands";
+import { genericFormatById } from "@/lib/generic-formats";
 import type { AdBrief, BriefReference, Dimension } from "@/lib/types";
 import { textSafeZonePrompt } from "./safe-zone";
 
@@ -114,6 +115,20 @@ export function buildPrompt(brief: AdBrief, inputs: PromptInputs, dimension: Dim
     ...imageGuide(inputs),
   ];
 
+  const genericFormat =
+    brief.formatMode === "generic" ? genericFormatById(brief.genericFormatId) : null;
+  if (genericFormat) {
+    lines.push(
+      `Build this ad in the ${genericFormat.name} format${genericFormat.category ? ` (${genericFormat.category})` : ""}. This chosen format is the concept and layout for the ad; follow it closely.`,
+    );
+    if (genericFormat.description) {
+      lines.push(`Format description: ${genericFormat.description}`);
+    }
+    lines.push(
+      "Every image generated in this request must be very distinct from the others. Give each one a different execution of this format: a different composition, setting, scene, people, headline, and angle. Changing only colors, wording, or small details counts as the same image. Keep every variation in this format and on brief.",
+    );
+  }
+
   if (brief.productVisibility === "secondary") {
     lines.push(
       "The product appears in the scene but is not the main focus; the attention-grabbing concept comes first.",
@@ -190,6 +205,12 @@ export function buildPrompt(brief: AdBrief, inputs: PromptInputs, dimension: Dim
   ) {
     lines.push(
       "Required: derive the art style and aesthetics from the style reference. The ad must look styled like that image, while staying compositionally the format reference.",
+    );
+  }
+
+  if (genericFormat) {
+    lines.push(
+      `Required: this ad must clearly be a ${genericFormat.name} ad${genericFormat.description ? ` — ${genericFormat.description}` : ""}. Required: each image in this request must be very distinct from the others, with its own composition, setting, and headline.`,
     );
   }
 

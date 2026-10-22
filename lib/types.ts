@@ -57,8 +57,14 @@ export type LandingPage = {
   sections?: LandingPageSection[];
 };
 
+export type FormatMode = "references" | "generic";
+
 export type AdBrief = {
   brand: string;
+  /** References builds from style/format images; generic uses one chosen generic format. */
+  formatMode?: FormatMode;
+  /** Id from GENERIC_FORMATS, required when formatMode is "generic". */
+  genericFormatId?: string | null;
   products: { id: string; sku: string; name: string }[];
   productVisibility: ProductVisibility;
   dimensions: Dimension[];

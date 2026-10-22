@@ -1,3 +1,4 @@
+import { genericFormatById } from "@/lib/generic-formats";
 import type { AdBrief, BriefReference } from "@/lib/types";
 
 /** One generator call: a style/format pairing and how many variants to make from it. */
@@ -64,7 +65,21 @@ export function pairGap(refs: { role: BriefReference["role"] }[]): "both" | "sty
 }
 
 /** Each reference group is a batch. `targetAds` is variations per style/format pair. */
-export function planBatches(brief: Pick<AdBrief, "references" | "referenceGroups" | "targetAds">): Batch[] {
+export function planBatches(
+  brief: Pick<AdBrief, "references" | "referenceGroups" | "targetAds" | "formatMode" | "genericFormatId">,
+): Batch[] {
+  if (brief.formatMode === "generic") {
+    return [
+      {
+        id: brief.referenceGroups[0]?.id ?? "generic",
+        index: 0,
+        name: genericFormatById(brief.genericFormatId)?.name ?? "Generic formats",
+        count: brief.targetAds,
+        jobs: [{ style: null, format: null, count: brief.targetAds }],
+      },
+    ];
+  }
+
   const groups = brief.referenceGroups
     .map((g, index) => ({ ...g, index, refs: brief.references.filter((r) => r.groupId === g.id) }))
     .filter((g) => g.refs.length > 0);

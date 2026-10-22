@@ -15,15 +15,17 @@ const HUES = [210, 330, 30, 150, 270, 0];
  */
 export const mockGenerator: AdGenerator = {
   name: "mock",
-  async generate({ styleImage, formatImage, revisionImage, dimension, count }) {
+  async generate({ styleImage, formatImage, revisionImage, productImages, dimension, count }) {
     const [w, h] = SIZES[dimension];
-    const base = (revisionImage ?? styleImage ?? formatImage)!;
-    const refHref = `data:${base.type};base64,${Buffer.from(base.bytes).toString("base64")}`;
+    const base = revisionImage ?? styleImage ?? formatImage ?? productImages[0];
+    const refHref = base
+      ? `data:${base.type};base64,${Buffer.from(base.bytes).toString("base64")}`
+      : null;
 
     const urls = Array.from({ length: count }, (_, i) => {
       const hue = HUES[i % HUES.length];
       const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
-  <image href="${refHref}" width="${w}" height="${h}" preserveAspectRatio="xMidYMid slice"/>
+  ${refHref ? `<image href="${refHref}" width="${w}" height="${h}" preserveAspectRatio="xMidYMid slice"/>` : `<rect width="${w}" height="${h}" fill="hsl(${hue} 60% 85%)"/>`}
   <rect width="${w}" height="${h}" fill="hsl(${hue} 80% 50%)" fill-opacity="0.18"/>
 </svg>`;
       return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;

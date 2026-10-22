@@ -1,3 +1,4 @@
+import { genericFormatById } from "@/lib/generic-formats";
 import type { AdBrief, BriefReference, LandingPage } from "@/lib/types";
 
 type ReferenceSummary = { reference: string; prompt: string | null };
@@ -24,6 +25,8 @@ type BreakdownBase = {
   copy: "separated" | "in-image";
   copy_text: string | null;
   dimensions: AdBrief["dimensions"];
+  format_mode: NonNullable<AdBrief["formatMode"]>;
+  generic_format: string | null;
   product: string;
   brand: string;
   product_visibility: AdBrief["productVisibility"];
@@ -125,6 +128,11 @@ function breakdownBase(brief: AdBrief, brandId: string): BreakdownBase {
     copy: brief.copyMode === "separate" ? "separated" : "in-image",
     copy_text: brief.copyMode === "in-image" && brief.copy.trim() ? brief.copy.trim() : null,
     dimensions: brief.dimensions,
+    format_mode: brief.formatMode ?? "references",
+    generic_format:
+      brief.formatMode === "generic"
+        ? (genericFormatById(brief.genericFormatId)?.name ?? null)
+        : null,
     product: brief.products.map((p) => p.sku).join(", "),
     brand: brandId,
     product_visibility: brief.productVisibility,

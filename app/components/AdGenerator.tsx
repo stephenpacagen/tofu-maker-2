@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { countAds, pairGap, planBatches, splitEvenly, type Batch } from "@/lib/batches";
+import { GENERIC_FORMATS, genericFormatById } from "@/lib/generic-formats";
 import { filesForUpload } from "@/lib/upload-image";
 import { zipFolder } from "@/lib/zip-folder";
 import type { Brand } from "@/lib/brands";
@@ -32,6 +33,7 @@ import {
   type AdBrief,
   type CopyMode,
   type Dimension,
+  type FormatMode,
   type GeneratedAd,
   type LandingPage,
   type ProductVisibility,
@@ -50,6 +52,9 @@ import {
 /** Developer-only JSON panels on Creative input and References. Flip this to show them. */
 const SHOW_CREATIVE_BREAKDOWN = false;
 
+/** References vs generic formats picker on Creative input. Flip this to bring it back. */
+const SHOW_FORMAT_MODE_OPTION = false;
+
 type Stage = "inputs" | "references" | "review" | "results";
 
 const STAGES: { id: Stage; label: string }[] = [
@@ -60,6 +65,23 @@ const STAGES: { id: Stage; label: string }[] = [
 ];
 
 type ReferenceSource = "upload" | "library";
+
+const FORMAT_MODES: {
+  id: FormatMode;
+  title: string;
+  description: string;
+}[] = [
+  {
+    id: "references",
+    title: "Use references",
+    description: "Build each ad from the style and format reference images you add.",
+  },
+  {
+    id: "generic",
+    title: "Generic formats",
+    description: "Skip reference images and let the model invent the layout and style.",
+  },
+];
 
 const REFERENCE_SOURCES: {
   id: ReferenceSource;
@@ -81,9 +103,11 @@ const REFERENCE_SOURCES: {
 
 function ProgressBar({
   stage,
+  hasResults,
   onSelect,
 }: {
   stage: Stage;
+  hasResults: boolean;
   onSelect: (stage: Stage) => void;
 }) {
   const current = STAGES.findIndex((s) => s.id === stage);
@@ -101,16 +125,21 @@ function ProgressBar({
           {STAGES.map((s, i) => {
             const done = i < current;
             const active = i === current;
-            const clickable = stage !== "results" && done;
+            // Before any run, only earlier steps are clickable. Once a run
+            // exists, every other step is — including Results, which shows
+            // the existing images again without regenerating.
+            const completed = done || (hasResults && !active);
+            const clickable =
+              !active && (hasResults || (stage !== "results" && done));
             const marker = (
               <span
                 className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 text-xs font-semibold transition-colors ${
-                  done || active
+                  completed || active
                     ? "border-brand bg-brand text-white"
                     : "border-zinc-300 bg-white text-zinc-400"
                 }`}
               >
-                {done ? "✓" : i + 1}
+                {completed ? "✓" : i + 1}
               </span>
             );
             const label = (
@@ -1035,12 +1064,17 @@ export function AdGenerator({ brand }: { brand: Brand }) {
   const [productId, setProductId] = useState<string | null>(null);
   const [productPhotos, setProductPhotos] = useState<Record<string, File>>({});
   const [dimensions, setDimensions] = useState<Dimension[]>(["4x5"]);
+  const [formatMode, setFormatMode] = useState<FormatMode>("references");
+  const [genericFormatId, setGenericFormatId] = useState<string | null>(null);
+  // While the formats picker is hidden, runs always use references.
+  if (!SHOW_FORMAT_MODE_OPTION && formatMode !== "references")
+    setFormatMode("references");
   const [copyMode, setCopyMode] = useState<CopyMode>("separate");
   const [copy, setCopy] = useState("");
   const [productVisibility, setProductVisibility] =
     useState<ProductVisibility>("secondary");
-  const [targetAds, setTargetAds] = useState(4);
-  const [variationsText, setVariationsText] = useState("4");
+  const [targetAds, setTargetAds] = useState(3);
+  const [variationsText, setVariationsText] = useState("3");
   const [landingPages, setLandingPages] = useState<LandingPage[]>([]);
   const [landingUrl, setLandingUrl] = useState("");
   const [landingError, setLandingError] = useState<string | null>(null);
@@ -1091,10 +1125,17 @@ export function AdGenerator({ brand }: { brand: Brand }) {
     preparing ||
     chunks.some((c) => c.status === "pending" || c.status === "running");
 
-  const selectedProducts = brand.products.filter((p) => p.id === productId);
+  const pickedProduct = brand.products.find((p) => p.id === productId);
+  const selectedProducts = pickedProduct
+    ? pickedProduct.bundleOf
+      ? brand.products.filter((p) => pickedProduct.bundleOf?.includes(p.id))
+      : [pickedProduct]
+    : [];
 
   const brief: AdBrief = {
     brand: brand.name,
+    formatMode,
+    genericFormatId: formatMode === "generic" ? genericFormatId : null,
     products: selectedProducts.map(({ id, sku, name }) => ({ id, sku, name })),
     productVisibility,
     dimensions,
@@ -1130,16 +1171,18 @@ export function AdGenerator({ brand }: { brand: Brand }) {
   const stepTwoBreakdown = toReferenceBreakdown(brief, brand.id);
   const stepTwoJson = JSON.stringify(stepTwoBreakdown, null, 2);
 
-  const referencesMissing = groups
-    .map((g, i) => {
+  const referencesMissing = (
+    formatMode === "generic"
+      ? []
+      : groups.map((g, i) => {
       const name = g.name.trim() || `Reference group ${i + 1}`;
       const gap = pairGap(references.filter((r) => r.groupId === g.id));
       if (gap === "both") return `a style reference and a format reference in ${name}`;
       if (gap === "style") return `a style reference in ${name}`;
       if (gap === "format") return `a format reference in ${name}`;
-      return null;
-    })
-    .filter((n) => n !== null);
+          return null;
+        }).filter((n) => n !== null)
+  );
   const variationsNumber = /^\d+$/.test(variationsText)
     ? Number(variationsText)
     : null;
@@ -1150,6 +1193,7 @@ export function AdGenerator({ brand }: { brand: Brand }) {
   const inputsMissing = [
     brief.products.length === 0 && "a product",
     dimensions.length === 0 && "a dimension",
+    formatMode === "generic" && !genericFormatId && "a generic format",
     (variationsNumber === null || variationsOutOfRange) &&
       `variations from ${MIN_VARIATIONS_PER_REFERENCE} to ${MAX_VARIATIONS_PER_REFERENCE}`,
   ].filter(Boolean);
@@ -1496,11 +1540,13 @@ export function AdGenerator({ brand }: { brand: Brand }) {
     setProductId(null);
     setProductPhotos({});
     setDimensions(["4x5"]);
+    setFormatMode("references");
+    setGenericFormatId(null);
     setCopyMode("separate");
     setCopy("");
     setProductVisibility("secondary");
-    setTargetAds(4);
-    setVariationsText("4");
+    setTargetAds(3);
+    setVariationsText("3");
     setLandingPages([]);
     setLandingUrl("");
     setLandingError(null);
@@ -1526,6 +1572,16 @@ export function AdGenerator({ brand }: { brand: Brand }) {
   }
 
   async function generate() {
+    if (!canReview) {
+      setError(
+        inputsMissing.length > 0
+          ? `Still needed: ${inputsMissing.join(", ")}`
+          : referencesMissing.length > 0
+            ? `Still needed: ${referencesMissing.join(", ")}`
+            : `${totalAds} ads is over the ${MAX_TOTAL_ADS} ad limit for one run.`,
+      );
+      return;
+    }
     setPreparing(true);
     setError(null);
     try {
@@ -1809,27 +1865,45 @@ export function AdGenerator({ brand }: { brand: Brand }) {
   const groupNames = Object.fromEntries(
     resultBatches.map((b) => [b.id, batchLabel(b)]),
   );
+  const hasResults = resultBatches.length > 0;
+
+  function goToStage(next: Stage) {
+    if (next === stage) return;
+    if (next === "review" && !canReview) return;
+    if (next === "results" && !hasResults) return;
+    setStage(next);
+  }
 
   return (
     <div>
-      <ProgressBar stage={stage} onSelect={setStage} />
+      <ProgressBar stage={stage} hasResults={hasResults} onSelect={goToStage} />
 
       {stage === "inputs" && (
         <div className="flex flex-col gap-8">
           <section className="card">
             <h2 className="section-title">Creative input</h2>
             <div className="grid grid-cols-2 gap-4">
-              <div className="field">
-                <span>Brand *</span>
-                <p className="py-2 text-sm font-normal text-zinc-900">
-                  {brand.name}{" "}
-                  <span className="text-zinc-400">
-                    (switch with the tabs above)
-                  </span>
-                </p>
+              <div className="col-span-2">
+                <ProductPicker
+                  products={brand.products}
+                  selectedId={productId}
+                  radioName={`product-${brand.id}`}
+                  onSelect={setProductId}
+                  visibility={productVisibility}
+                  onVisibilityChange={setProductVisibility}
+                  photos={productPhotos}
+                  onPhotoChange={(id, file) =>
+                    setProductPhotos((prev) => {
+                      const next = { ...prev };
+                      if (file) next[id] = file;
+                      else delete next[id];
+                      return next;
+                    })
+                  }
+                />
               </div>
 
-              <div className="field">
+              <div className="field col-span-2">
                 <span>Dimension formats *</span>
                 <div className="flex gap-2">
                   {DIMENSIONS.map((d) => {
@@ -1869,25 +1943,74 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                 </span>
               </div>
 
-              <div className="col-span-2">
-                <ProductPicker
-                  products={brand.products}
-                  selectedId={productId}
-                  radioName={`product-${brand.id}`}
-                  onSelect={setProductId}
-                  visibility={productVisibility}
-                  onVisibilityChange={setProductVisibility}
-                  photos={productPhotos}
-                  onPhotoChange={(id, file) =>
-                    setProductPhotos((prev) => {
-                      const next = { ...prev };
-                      if (file) next[id] = file;
-                      else delete next[id];
-                      return next;
-                    })
-                  }
-                />
+              {SHOW_FORMAT_MODE_OPTION && (
+              <div className="field col-span-2">
+                <span>Formats</span>
+                <div
+                  role="radiogroup"
+                  className="grid grid-cols-1 gap-3 sm:grid-cols-2"
+                >
+                  {FORMAT_MODES.map((mode) => {
+                    const selected = formatMode === mode.id;
+                    return (
+                      <button
+                        key={mode.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        onClick={() => setFormatMode(mode.id)}
+                        className={`flex flex-col gap-1 rounded-xl border-2 p-4 text-left transition-colors ${
+                          selected
+                            ? "border-brand bg-brand/5"
+                            : "border-zinc-200 bg-white hover:border-zinc-300"
+                        }`}
+                      >
+                        <span className="text-sm font-semibold text-zinc-900">
+                          {mode.title}
+                        </span>
+                        <span className="text-sm font-normal text-zinc-500">
+                          {mode.description}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
+              )}
+
+              {SHOW_FORMAT_MODE_OPTION && formatMode === "generic" && (
+                <label className="field col-span-2">
+                  <span>Generic format *</span>
+                  <select
+                    value={genericFormatId ?? ""}
+                    onChange={(e) =>
+                      setGenericFormatId(e.target.value || null)
+                    }
+                  >
+                    <option value="" disabled>
+                      Choose a format…
+                    </option>
+                    {Array.from(
+                      Map.groupBy(
+                        GENERIC_FORMATS,
+                        (f) => f.category || "Other",
+                      ),
+                    ).map(([category, items]) => (
+                      <optgroup key={category} label={category}>
+                        {items.map((f) => (
+                          <option key={f.id} value={f.id}>
+                            {f.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                  <span className="font-normal text-zinc-400">
+                    {genericFormatById(genericFormatId)?.description ||
+                      "Pick the one format every ad in this run will follow."}
+                  </span>
+                </label>
+              )}
 
               <label className="field">
                 <span>Variations per reference</span>
@@ -2042,14 +2165,29 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                 ? `Still needed: ${inputsMissing.join(", ")}`
                 : "Creative input is complete."}
             </p>
-            <button
-              type="button"
-              disabled={inputsMissing.length > 0}
-              onClick={() => setStage("references")}
-              className="btn-primary"
-            >
-              Next: references
-            </button>
+            <div className="flex gap-2">
+              {hasResults && (
+                <button
+                  type="button"
+                  onClick={() => goToStage("results")}
+                  className="btn-secondary"
+                >
+                  View results
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={inputsMissing.length > 0}
+                onClick={() =>
+                  setStage(formatMode === "generic" ? "review" : "references")
+                }
+                className="btn-primary"
+              >
+                {formatMode === "generic"
+                  ? "Next: review brief"
+                  : "Next: references"}
+              </button>
+            </div>
           </footer>
         </div>
       )}
@@ -2355,7 +2493,11 @@ export function AdGenerator({ brand }: { brand: Brand }) {
               <dt className="text-zinc-500">Brand</dt>
               <dd>{brief.brand}</dd>
               <dt className="text-zinc-500">Product</dt>
-              <dd>{brief.products.map((p) => p.name).join(", ")}</dd>
+              <dd>
+                {pickedProduct?.bundleOf
+                  ? `${pickedProduct.name} (${brief.products.map((p) => p.name).join(" + ")})`
+                  : brief.products.map((p) => p.name).join(", ")}
+              </dd>
               <dt className="text-zinc-500">Product in the ad</dt>
               <dd>
                 {productVisibility === "secondary"
@@ -2368,6 +2510,12 @@ export function AdGenerator({ brand }: { brand: Brand }) {
               </dd>
               <dt className="text-zinc-500">Dimensions</dt>
               <dd>{brief.dimensions.join(", ")}</dd>
+              <dt className="text-zinc-500">Format</dt>
+              <dd>
+                {formatMode === "generic"
+                  ? `Generic · ${genericFormatById(genericFormatId)?.name ?? "None chosen"}`
+                  : "References"}
+              </dd>
               <dt className="text-zinc-500">Copy</dt>
               <dd>
                 {copyMode === "separate" ? "Separate" : `In image: "${copy}"`}
@@ -2541,17 +2689,35 @@ export function AdGenerator({ brand }: { brand: Brand }) {
           <footer className="flex justify-between">
             <button
               type="button"
-              onClick={() => setStage("references")}
+              onClick={() =>
+                setStage(formatMode === "generic" ? "inputs" : "references")
+              }
               className="btn-secondary"
               disabled={generating}
             >
-              Back to references
+              {formatMode === "generic"
+                ? "Back to creative input"
+                : "Back to references"}
             </button>
+            {hasResults && (
+              <button
+                type="button"
+                onClick={() => goToStage("results")}
+                className="btn-secondary"
+              >
+                View results
+              </button>
+            )}
             <button
               type="button"
               onClick={generate}
               className="btn-primary"
-              disabled={generating}
+              disabled={generating || !canReview}
+              title={
+                canReview
+                  ? undefined
+                  : "Complete the creative input and references first"
+              }
             >
               {generating
                 ? "Generating…"

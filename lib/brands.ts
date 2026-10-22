@@ -9,6 +9,8 @@ export type Product = {
   sku: string;
   name: string;
   category?: string;
+  /** Product ids this option stands for. Picking it promotes all of them together. */
+  bundleOf?: string[];
   /** Optional default photo, as a path under `public/` (e.g. "/products/pacagen/cans.png"). */
   image?: string;
   /** What the product is for, in approved language. */
@@ -49,38 +51,52 @@ export const BRANDS: Brand[] = [
     fonts: { title: "Domine", text: "Work Sans" },
     products: [
       {
+        id: "cat-allergy-bundle",
+        sku: "CANS + CHS",
+        name: "Cat Allergy Bundle",
+        category: "Cat Allergies",
+        bundleOf: ["cans", "chs"],
+      },
+      {
         id: "cans",
         sku: "CANS",
         name: "Cat Allergen Neutralizing Spray",
-        category: "For Cat Allergies",
+        category: "Cat Allergies",
         image: "/images/cat_allergen_neutralizing_spray.png",
       },
       {
         id: "chs",
         sku: "CHS",
         name: "Cat Allergen Reducing Supplement",
-        category: "For Cat Allergies",
+        category: "Cat Allergies",
         image: "/images/cat_allergen_reducing_supplement.png",
       },
       {
         id: "duans",
         sku: "DUANS",
         name: "Dust Allergen Neutralizing Spray",
-        category: "For Dust Allergies",
+        category: "Dust & Environmental Allergies",
         image: "/images/dust_allergen_neutralizing_spray.png",
       },
       {
         id: "eefm",
         sku: "EEFM",
         name: "EnviroBlock™ Everyday Face Mist",
-        category: "For Dust Allergies",
+        category: "Dust & Environmental Allergies",
         image: "/images/enviroblock_everyday_face_mist.png",
+      },
+      {
+        id: "eefm-uncapped",
+        sku: "EEFM-UNCAPPED",
+        name: "EnviroBlock™ Everyday Face Mist — Uncapped",
+        category: "Dust & Environmental Allergies",
+        image: "/images/naked-EEFM.png",
       },
       {
         id: "dans",
         sku: "DANS",
         name: "Dog Allergen Neutralizing Spray",
-        category: "For Dog Allergies",
+        category: "Dog Allergies",
         image: "/images/dog_allergen_neutralizing_spray.png",
       },
     ],

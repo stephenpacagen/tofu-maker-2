@@ -1,6 +1,7 @@
 import { countAds, pairGap, planBatches } from "@/lib/batches";
 import { BRANDS } from "@/lib/brands";
 import { toReferenceBreakdown } from "@/lib/breakdown";
+import { genericFormatById } from "@/lib/generic-formats";
 import { buildPrompt, getGenerator, referenceCoversBoth, type ImageInput } from "@/lib/generation";
 import {
   GEMINI_IMAGE_SIZES,
@@ -36,9 +37,15 @@ async function toImageInput(value: FormDataEntryValue | null): Promise<ImageInpu
 function validateBrief(brief: AdBrief): string | null {
   const brand = BRANDS.find((b) => b.name === brief.brand);
   if (!brand) return "Unknown brand";
-  if (brief.products?.length !== 1) return "Select one product";
   if (brief.products.some((p) => !brand.products.some((bp) => bp.id === p.id)))
     return `Unknown product for ${brand.name}`;
+  const isBundle = brand.products.some(
+    (bp) =>
+      bp.bundleOf &&
+      bp.bundleOf.length === brief.products?.length &&
+      bp.bundleOf.every((id) => brief.products.some((p) => p.id === id)),
+  );
+  if (brief.products?.length !== 1 && !isBundle) return "Select one product";
   if (!brief.dimensions?.length || brief.dimensions.some((d) => !DIMENSIONS.includes(d)))
     return "Pick at least one valid dimension";
   if (brief.productVisibility !== "secondary" && brief.productVisibility !== "none")
@@ -52,10 +59,15 @@ function validateBrief(brief: AdBrief): string | null {
     return `Use at most ${MAX_REFERENCE_GROUPS} reference groups`;
   const groupIds = new Set(brief.referenceGroups.map((g) => g.id));
   if (brief.references.some((r) => !groupIds.has(r.groupId))) return "Reference belongs to an unknown group";
-  const incomplete = brief.referenceGroups.findIndex((g) => {
-    const refs = brief.references.filter((r) => r.groupId === g.id);
-    return pairGap(refs) !== null;
-  });
+  if (brief.formatMode === "generic" && !genericFormatById(brief.genericFormatId))
+    return "Choose a generic format";
+  const incomplete =
+    brief.formatMode === "generic"
+      ? -1
+      : brief.referenceGroups.findIndex((g) => {
+          const refs = brief.references.filter((r) => r.groupId === g.id);
+          return pairGap(refs) !== null;
+        });
   if (incomplete !== -1) {
     const refs = brief.references.filter((r) => r.groupId === brief.referenceGroups[incomplete].id);
     const gap = pairGap(refs);
