@@ -61,8 +61,10 @@ function validateBrief(brief: AdBrief): string | null {
   if (brief.references.some((r) => !groupIds.has(r.groupId))) return "Reference belongs to an unknown group";
   if (brief.formatMode === "generic" && !genericFormatById(brief.genericFormatId))
     return "Choose a generic format";
+  if (brief.landingPageAsReference && (brief.landingPages?.length ?? 0) === 0)
+    return "Add a landing page to use as the reference";
   const incomplete =
-    brief.formatMode === "generic"
+    brief.formatMode === "generic" || brief.landingPageAsReference
       ? -1
       : brief.referenceGroups.findIndex((g) => {
           const refs = brief.references.filter((r) => r.groupId === g.id);

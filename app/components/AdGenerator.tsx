@@ -10,12 +10,9 @@ import type { Brand } from "@/lib/brands";
 import { toInputBreakdown, toReferenceBreakdown } from "@/lib/breakdown";
 import {
   DEFAULT_GENERATION_OPTIONS,
-  GEMINI_IMAGE_SIZES,
   GENERATION_CONCURRENCY,
   GENERATION_MODELS,
-  IMAGE_QUALITIES,
   MAX_IMAGES_PER_REQUEST,
-  providerOf,
   type GenerateChunk,
   type GenerateChunkResponse,
   type GenerationOptions,
@@ -1076,6 +1073,8 @@ export function AdGenerator({ brand }: { brand: Brand }) {
   const [targetAds, setTargetAds] = useState(3);
   const [variationsText, setVariationsText] = useState("3");
   const [landingPages, setLandingPages] = useState<LandingPage[]>([]);
+  const [landingPageAsReference, setLandingPageAsReference] = useState(false);
+  const [landingPagePrompt, setLandingPagePrompt] = useState("");
   const [landingUrl, setLandingUrl] = useState("");
   const [landingError, setLandingError] = useState<string | null>(null);
   const [landingLoading, setLandingLoading] = useState(false);
@@ -1114,9 +1113,8 @@ export function AdGenerator({ brand }: { brand: Brand }) {
   const adsRef = useRef<GeneratedAd[]>([]);
   adsRef.current = ads;
   const [resultBatches, setResultBatches] = useState<Batch[]>([]);
-  const [options, setOptions] = useState<GenerationOptions>(
-    DEFAULT_GENERATION_OPTIONS,
-  );
+  // Generation always runs on the default model and quality.
+  const options: GenerationOptions = DEFAULT_GENERATION_OPTIONS;
   const [chunks, setChunks] = useState<Chunk[]>([]);
   const [preparing, setPreparing] = useState(false);
   const run = useRef<RunContext | null>(null);
@@ -1145,7 +1143,9 @@ export function AdGenerator({ brand }: { brand: Brand }) {
     targetAds,
     copyMode,
     copy,
-    landingPages: copyMode === "in-image" ? landingPages : [],
+    landingPageAsReference,
+    landingPagePrompt,
+    landingPages,
     referenceGroups: groups.map(({ id, name, description }) => ({
       id,
       name,
@@ -1172,7 +1172,7 @@ export function AdGenerator({ brand }: { brand: Brand }) {
   const stepTwoJson = JSON.stringify(stepTwoBreakdown, null, 2);
 
   const referencesMissing = (
-    formatMode === "generic"
+    formatMode === "generic" || landingPageAsReference
       ? []
       : groups.map((g, i) => {
       const name = g.name.trim() || `Reference group ${i + 1}`;
@@ -1548,6 +1548,8 @@ export function AdGenerator({ brand }: { brand: Brand }) {
     setTargetAds(3);
     setVariationsText("3");
     setLandingPages([]);
+    setLandingPageAsReference(false);
+    setLandingPagePrompt("");
     setLandingUrl("");
     setLandingError(null);
     setGroups([
@@ -2065,17 +2067,17 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                   </select>
                 </label>
                 {copyMode === "in-image" && (
-                  <>
-                    <label className="field col-span-2">
-                      <span>Ad copy</span>
-                      <textarea
-                        rows={2}
-                        value={copy}
-                        onChange={(e) => setCopy(e.target.value)}
-                      />
-                    </label>
-                    <div className="field col-span-2">
-                      <span>Landing page link (optional)</span>
+                  <label className="field col-span-2">
+                    <span>Ad copy</span>
+                    <textarea
+                      rows={2}
+                      value={copy}
+                      onChange={(e) => setCopy(e.target.value)}
+                    />
+                  </label>
+                )}
+                <div className="field col-span-2">
+                  <span>Landing page link (optional)</span>
                       <form
                         className="flex items-center gap-2"
                         onSubmit={(e) => {
@@ -2129,11 +2131,14 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                               </span>
                               <button
                                 type="button"
-                                onClick={() =>
-                                  setLandingPages((prev) =>
-                                    prev.filter((_, j) => j !== i),
-                                  )
-                                }
+                                onClick={() => {
+                                  const next = landingPages.filter(
+                                    (_, j) => j !== i,
+                                  );
+                                  setLandingPages(next);
+                                  if (next.length === 0)
+                                    setLandingPageAsReference(false);
+                                }}
                                 className="text-zinc-400 hover:text-rose-600"
                                 aria-label={`Remove ${lp.title}`}
                               >
@@ -2143,9 +2148,59 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                           ))}
                         </div>
                       )}
-                    </div>
-                  </>
-                )}
+                      {landingPages.length > 0 && (
+                        <button
+                          type="button"
+                          role="checkbox"
+                          aria-checked={landingPageAsReference}
+                          onClick={() =>
+                            setLandingPageAsReference((value) => !value)
+                          }
+                          className={`mt-2 flex w-full items-start gap-3 rounded-xl border-2 p-3 text-left transition-colors ${
+                            landingPageAsReference
+                              ? "border-brand bg-brand/5"
+                              : "border-zinc-200 bg-white hover:border-zinc-300"
+                          }`}
+                        >
+                          <span
+                            className={`mt-0.5 flex size-5 shrink-0 items-center justify-center rounded border text-xs ${
+                              landingPageAsReference
+                                ? "border-brand bg-brand text-white"
+                                : "border-zinc-300 bg-white text-transparent"
+                            }`}
+                          >
+                            ✓
+                          </span>
+                          <span>
+                            <span className="block text-sm font-semibold text-zinc-900">
+                              Use this landing page as the reference
+                            </span>
+                            <span className="block text-sm font-normal text-zinc-500">
+                              Build the ads from the landing page, with no
+                              reference images, and go straight to Review
+                              brief.
+                            </span>
+                          </span>
+                        </button>
+                      )}
+                      {landingPageAsReference && (
+                        <label className="field mt-2">
+                          <span>Additional prompt (optional)</span>
+                          <textarea
+                            rows={3}
+                            value={landingPagePrompt}
+                            onChange={(e) =>
+                              setLandingPagePrompt(e.target.value)
+                            }
+                            placeholder="Anything else the ads should do — a specific angle, scene, audience, or style to lean into…"
+                          />
+                          <span className="font-normal text-zinc-400">
+                            Added to the landing page instructions when the
+                            ads are built from it.
+                          </span>
+                        </label>
+                      )}
+                </div>
               </div>
             </div>
 
@@ -2179,11 +2234,15 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                 type="button"
                 disabled={inputsMissing.length > 0}
                 onClick={() =>
-                  setStage(formatMode === "generic" ? "review" : "references")
+                  setStage(
+                    formatMode === "generic" || landingPageAsReference
+                      ? "review"
+                      : "references",
+                  )
                 }
                 className="btn-primary"
               >
-                {formatMode === "generic"
+                {formatMode === "generic" || landingPageAsReference
                   ? "Next: review brief"
                   : "Next: references"}
               </button>
@@ -2512,9 +2571,11 @@ export function AdGenerator({ brand }: { brand: Brand }) {
               <dd>{brief.dimensions.join(", ")}</dd>
               <dt className="text-zinc-500">Format</dt>
               <dd>
-                {formatMode === "generic"
-                  ? `Generic · ${genericFormatById(genericFormatId)?.name ?? "None chosen"}`
-                  : "References"}
+                {landingPageAsReference
+                  ? `Landing page · ${brief.landingPages[0]?.title ?? "None added"}`
+                  : formatMode === "generic"
+                    ? `Generic · ${genericFormatById(genericFormatId)?.name ?? "None chosen"}`
+                    : "References"}
               </dd>
               <dt className="text-zinc-500">Copy</dt>
               <dd>
@@ -2524,6 +2585,12 @@ export function AdGenerator({ brand }: { brand: Brand }) {
               <dd>
                 {brief.landingPages.map((lp) => lp.title).join(", ") || "None"}
               </dd>
+              {landingPageAsReference && landingPagePrompt.trim() && (
+                <>
+                  <dt className="text-zinc-500">Landing page prompt</dt>
+                  <dd>{landingPagePrompt.trim()}</dd>
+                </>
+              )}
               <dt className="text-zinc-500">Variations</dt>
               <dd>
                 {targetAds} per reference · {totalAds} ads across{" "}
@@ -2607,79 +2674,6 @@ export function AdGenerator({ brand }: { brand: Brand }) {
             </details>
           </section>
 
-          <section className="card">
-            <h2 className="section-title">Image generation</h2>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className="field">
-                <span>Model</span>
-                <select
-                  value={options.model}
-                  onChange={(e) =>
-                    setOptions((o) => ({
-                      ...o,
-                      model: e.target.value as GenerationOptions["model"],
-                    }))
-                  }
-                >
-                  {GENERATION_MODELS.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {providerOf(options.model) === "openai" && (
-                <label className="field">
-                  <span>Quality</span>
-                  <select
-                    value={options.openaiQuality}
-                    onChange={(e) =>
-                      setOptions((o) => ({
-                        ...o,
-                        openaiQuality: e.target
-                          .value as GenerationOptions["openaiQuality"],
-                      }))
-                    }
-                  >
-                    {IMAGE_QUALITIES.map((q) => (
-                      <option key={q} value={q}>
-                        {q}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              {providerOf(options.model) === "gemini" && (
-                <label className="field">
-                  <span>Image size</span>
-                  <select
-                    value={options.geminiImageSize}
-                    onChange={(e) =>
-                      setOptions((o) => ({
-                        ...o,
-                        geminiImageSize: e.target
-                          .value as GenerationOptions["geminiImageSize"],
-                      }))
-                    }
-                  >
-                    {GEMINI_IMAGE_SIZES.map((s) => (
-                      <option key={s.value} value={s.value}>
-                        {s.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-            </div>
-            <p className="mt-3 text-xs text-zinc-500">
-              {providerOf(options.model) === "mock"
-                ? "Mock makes placeholder images from your references; nothing is sent to an image API."
-                : dimensions.length > 1
-                  ? `Generates ${totalAds / dimensions.length} images with the model in ${dimensions[0]}, then asks the model to resize each one to ${dimensions.slice(1).join(" and ")} (${totalAds} images in total, each billed by the provider). Every group's style/format pairing runs as its own request, ${GENERATION_CONCURRENCY} at a time.`
-                  : `Generates ${totalAds} image${totalAds === 1 ? "" : "s"}, each billed by the provider. Every group's style/format pairing runs as its own request, ${GENERATION_CONCURRENCY} at a time.`}
-            </p>
-          </section>
-
           {error && (
             <p className="rounded-lg bg-rose-50 p-3 text-sm text-rose-700">
               {error}
@@ -2690,12 +2684,16 @@ export function AdGenerator({ brand }: { brand: Brand }) {
             <button
               type="button"
               onClick={() =>
-                setStage(formatMode === "generic" ? "inputs" : "references")
+                setStage(
+                  formatMode === "generic" || landingPageAsReference
+                    ? "inputs"
+                    : "references",
+                )
               }
               className="btn-secondary"
               disabled={generating}
             >
-              {formatMode === "generic"
+              {formatMode === "generic" || landingPageAsReference
                 ? "Back to creative input"
                 : "Back to references"}
             </button>

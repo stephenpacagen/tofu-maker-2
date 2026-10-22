@@ -65,6 +65,10 @@ export type AdBrief = {
   formatMode?: FormatMode;
   /** Id from GENERIC_FORMATS, required when formatMode is "generic". */
   genericFormatId?: string | null;
+  /** Build the ads from the landing pages, with no reference images. */
+  landingPageAsReference?: boolean;
+  /** Extra instructions for building the ads from the landing page, when it is the reference. */
+  landingPagePrompt?: string;
   products: { id: string; sku: string; name: string }[];
   productVisibility: ProductVisibility;
   dimensions: Dimension[];

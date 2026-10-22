@@ -157,6 +157,17 @@ export function buildPrompt(brief: AdBrief, inputs: PromptInputs, dimension: Dim
       if (page.key_points.length > 0) parts.push(`Key points: ${page.key_points.join(" | ")}`);
       lines.push(parts.join("\n"));
     }
+    if (brief.landingPageAsReference) {
+      lines.push(
+        "The landing page is the reference for this ad. There is no reference image. Build the ad's concept, layout, and visual style from this page: its subject, promise, and key points are what the ad should be about and how it should be put together.",
+      );
+      const landingPagePrompt = brief.landingPagePrompt?.trim();
+      if (landingPagePrompt) {
+        lines.push(
+          `Additional instructions for using the landing page as the reference: ${landingPagePrompt}`,
+        );
+      }
+    }
   }
 
   lines.push(...productLines(brief));

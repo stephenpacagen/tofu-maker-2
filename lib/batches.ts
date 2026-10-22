@@ -66,8 +66,23 @@ export function pairGap(refs: { role: BriefReference["role"] }[]): "both" | "sty
 
 /** Each reference group is a batch. `targetAds` is variations per style/format pair. */
 export function planBatches(
-  brief: Pick<AdBrief, "references" | "referenceGroups" | "targetAds" | "formatMode" | "genericFormatId">,
+  brief: Pick<
+    AdBrief,
+    "references" | "referenceGroups" | "targetAds" | "formatMode" | "genericFormatId" | "landingPageAsReference" | "landingPages"
+  >,
 ): Batch[] {
+  if (brief.landingPageAsReference) {
+    return [
+      {
+        id: brief.referenceGroups[0]?.id ?? "landing-page",
+        index: 0,
+        name: brief.landingPages[0]?.title.trim() || "Landing page reference",
+        count: brief.targetAds,
+        jobs: [{ style: null, format: null, count: brief.targetAds }],
+      },
+    ];
+  }
+
   if (brief.formatMode === "generic") {
     return [
       {

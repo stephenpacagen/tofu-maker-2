@@ -27,6 +27,8 @@ type BreakdownBase = {
   dimensions: AdBrief["dimensions"];
   format_mode: NonNullable<AdBrief["formatMode"]>;
   generic_format: string | null;
+  landing_page_reference: boolean;
+  landing_page_prompt: string | null;
   product: string;
   brand: string;
   product_visibility: AdBrief["productVisibility"];
@@ -132,6 +134,11 @@ function breakdownBase(brief: AdBrief, brandId: string): BreakdownBase {
     generic_format:
       brief.formatMode === "generic"
         ? (genericFormatById(brief.genericFormatId)?.name ?? null)
+        : null,
+    landing_page_reference: Boolean(brief.landingPageAsReference),
+    landing_page_prompt:
+      brief.landingPageAsReference && brief.landingPagePrompt?.trim()
+        ? brief.landingPagePrompt.trim()
         : null,
     product: brief.products.map((p) => p.sku).join(", "),
     brand: brandId,
