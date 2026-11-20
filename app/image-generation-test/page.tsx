@@ -6,6 +6,7 @@
 import { useEffect, useState, type MouseEvent } from "react";
 import { DropZone } from "@/app/components/DropZone";
 import { SafeZoneOverlay } from "@/app/components/SafeZoneOverlay";
+import { withBasePath } from "@/lib/basePath";
 import { BRANDS, type Product } from "@/lib/brands";
 import {
   GEMINI_ASPECT_RATIOS,
@@ -714,7 +715,7 @@ export default function ImageGenerationTestPage() {
       form.append("expectedAspectRatio", result.qaInput.expected.aspectRatio);
       if (result.qaInput.expected.size) form.append("expectedSize", result.qaInput.expected.size);
 
-      const res = await fetch("/api/image-qa", { method: "POST", body: form });
+      const res = await fetch(withBasePath("/api/image-qa"), { method: "POST", body: form });
       const json = (await res
         .json()
         .catch(() => ({ error: `QA request failed (${res.status} ${res.statusText})` }))) as QAResponse;
@@ -740,7 +741,7 @@ export default function ImageGenerationTestPage() {
           : { aspectRatio: geminiSettings.aspectRatio },
     };
     try {
-      const res = await fetch(limits.endpoint, {
+      const res = await fetch(withBasePath(limits.endpoint), {
         method: "POST",
         body: buildForm(),
       });

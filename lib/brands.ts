@@ -1,3 +1,5 @@
+import { BASE_PATH } from "./basePath";
+
 export type SkuColors = {
   dark: string;
   medium: string;
@@ -62,42 +64,42 @@ export const BRANDS: Brand[] = [
         sku: "CANS",
         name: "Cat Allergen Neutralizing Spray",
         category: "Cat Allergies",
-        image: "/images/cat_allergen_neutralizing_spray.png",
+        image: `${BASE_PATH}/images/cat_allergen_neutralizing_spray.png`,
       },
       {
         id: "chs",
         sku: "CHS",
         name: "Cat Allergen Reducing Supplement",
         category: "Cat Allergies",
-        image: "/images/cat_allergen_reducing_supplement.png",
+        image: `${BASE_PATH}/images/cat_allergen_reducing_supplement.png`,
       },
       {
         id: "duans",
         sku: "DUANS",
         name: "Dust Allergen Neutralizing Spray",
         category: "Dust & Environmental Allergies",
-        image: "/images/dust_allergen_neutralizing_spray.png",
+        image: `${BASE_PATH}/images/dust_allergen_neutralizing_spray.png`,
       },
       {
         id: "eefm",
         sku: "EEFM",
         name: "EnviroBlock™ Everyday Face Mist",
         category: "Dust & Environmental Allergies",
-        image: "/images/enviroblock_everyday_face_mist.png",
+        image: `${BASE_PATH}/images/enviroblock_everyday_face_mist.png`,
       },
       {
         id: "eefm-uncapped",
         sku: "EEFM-UNCAPPED",
         name: "EnviroBlock™ Everyday Face Mist — Uncapped",
         category: "Dust & Environmental Allergies",
-        image: "/images/naked-EEFM.png",
+        image: `${BASE_PATH}/images/naked-EEFM.png`,
       },
       {
         id: "dans",
         sku: "DANS",
         name: "Dog Allergen Neutralizing Spray",
         category: "Dog Allergies",
-        image: "/images/dog_allergen_neutralizing_spray.png",
+        image: `${BASE_PATH}/images/dog_allergen_neutralizing_spray.png`,
       },
     ],
   },
@@ -112,7 +114,7 @@ export const BRANDS: Brand[] = [
         id: "hair-revival-serum",
         sku: "HAIR",
         name: "Dual-Path Hair Revival Serum",
-        image: "/images/reyou-hair-serum.png",
+        image: `${BASE_PATH}/images/reyou-hair-serum.png`,
       },
       {
         id: "brow-serum",
@@ -156,7 +158,7 @@ export const BRANDS: Brand[] = [
         id: "glp1-support",
         sku: "GLP",
         name: "GLP-1 Support — Lemon ginger green tea",
-        image: "/images/glp1-support.png",
+        image: `${BASE_PATH}/images/glp1-support.png`,
         positioning:
           "Supports the body's natural GLP-1 pathway for appetite control, fullness, and weight management. No drugs, no needles.",
         ingredients:
@@ -169,7 +171,7 @@ export const BRANDS: Brand[] = [
         id: "triple-power-build",
         sku: "TPB",
         name: "Triple Power Build — Berry hibiscus tea",
-        image: "/images/triple-power-build.png",
+        image: `${BASE_PATH}/images/triple-power-build.png`,
         positioning:
           "Designed for lean muscle, strength, recovery, and mental clarity without bulking. May help reduce bloat compared with single-form creatine.",
         ingredients: "Dual creatine (monohydrate and HCl), L-glutamine, electrolytes.",
@@ -181,7 +183,7 @@ export const BRANDS: Brand[] = [
         id: "deep-restore",
         sku: "DR",
         name: "Deep Restore — Apple chamomile tea",
-        image: "/images/deep-restore.png",
+        image: `${BASE_PATH}/images/deep-restore.png`,
         positioning:
           "Made for relaxation and sleep quality. No melatonin and no next-day grogginess. 5 calories per serving.",
         ingredients:

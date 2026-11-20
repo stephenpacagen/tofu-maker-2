@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { BASE_PATH } from "../basePath";
 import type { LibraryAd, LibraryBrand, LibraryPlatform, LibraryQuery } from "./library";
 
 const ACTOR = "automation-lab~facebook-ads-library";
@@ -64,7 +65,7 @@ async function writeDiskCache(key: string, items: ApifyAd[]) {
 
 export const hasApifyToken = () => Boolean(process.env.APIFY_TOKEN);
 
-export const proxiedImage = (url: string) => `/api/library/image?url=${encodeURIComponent(url)}`;
+export const proxiedImage = (url: string) => `${BASE_PATH}/api/library/image?url=${encodeURIComponent(url)}`;
 
 function runDays(ad: ApifyAd) {
   if (!ad.startDate) return undefined;

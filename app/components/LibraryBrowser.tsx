@@ -14,6 +14,7 @@ import {
   type RankedLibraryAd,
 } from "@/lib/references/library";
 import { REFERENCE_ROLE_LABELS, REFERENCE_ROLES, type ReferenceRole } from "@/lib/types";
+import { withBasePath } from "@/lib/basePath";
 import { ScoreBadge } from "./ReferenceCard";
 
 type SearchMode = "keyword" | "brand";
@@ -36,7 +37,7 @@ function Metric({ label, value }: { label: string; value: string }) {
 }
 
 async function getJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
+  const res = await fetch(withBasePath(url));
   const json = await res.json();
   if (!res.ok) throw new Error(json.error ?? "Request failed");
   return json;

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { countAds, pairGap, planBatches, splitEvenly, type Batch } from "@/lib/batches";
 import { GENERIC_FORMATS, genericFormatById } from "@/lib/generic-formats";
+import { withBasePath } from "@/lib/basePath";
 import { filesForUpload } from "@/lib/upload-image";
 import { zipFolder } from "@/lib/zip-folder";
 import type { Brand } from "@/lib/brands";
@@ -199,7 +200,7 @@ async function postImageJob(
   const form = new FormData();
   for (const [key, value] of Object.entries(fields)) form.append(key, value);
   for (const item of await filesForUpload(files)) form.append(item.name, item.file);
-  const res = await fetch(path, { method: "POST", body: form });
+  const res = await fetch(withBasePath(path), { method: "POST", body: form });
   return (await res.json().catch(() => ({
     error: `Request failed (${res.status} ${res.statusText})`,
   }))) as ImageJobResponse;
@@ -1403,7 +1404,7 @@ export function AdGenerator({ brand }: { brand: Brand }) {
     setLandingLoading(true);
     setLandingError(null);
     try {
-      const res = await fetch("/api/landing-page", {
+      const res = await fetch(withBasePath("/api/landing-page"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: trimmed }),
@@ -1463,7 +1464,7 @@ export function AdGenerator({ brand }: { brand: Brand }) {
       form.append("options", JSON.stringify(ctx.options));
       for (const item of await filesForUpload(uploadFiles)) form.append(item.name, item.file);
 
-      const res = await fetch("/api/generate", { method: "POST", body: form });
+      const res = await fetch(withBasePath("/api/generate"), { method: "POST", body: form });
       const json = (await res.json().catch(() => ({
         error: `Request failed (${res.status} ${res.statusText})`,
       }))) as GenerateChunkResponse;
@@ -1498,7 +1499,7 @@ export function AdGenerator({ brand }: { brand: Brand }) {
               resizeForm.append("options", JSON.stringify(ctx.options));
               resizeForm.append("dimension", dimension);
               resizeForm.append("image", file);
-              const resizeRes = await fetch("/api/resize-ad", {
+              const resizeRes = await fetch(withBasePath("/api/resize-ad"), {
                 method: "POST",
                 body: resizeForm,
               });
