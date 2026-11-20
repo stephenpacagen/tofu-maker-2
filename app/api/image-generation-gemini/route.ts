@@ -11,6 +11,7 @@ import {
   type GeminiImageGenerationRequest,
   type GeminiImageGenerationResponse,
 } from "@/lib/gemini/image-generation-types";
+import { textSafeZonePrompt } from "@/lib/generation/safe-zone";
 
 export const maxDuration = 300;
 
@@ -81,8 +82,14 @@ export async function POST(request: Request) {
   }
 
   try {
+    // Append the shared 9:16 text-safe-zone constraint for every 9:16 generation.
+    const request =
+      parsed.aspectRatio === "9:16" &&
+      !parsed.prompt.includes("9:16 text safe zone")
+        ? { ...parsed, prompt: `${parsed.prompt}\n${textSafeZonePrompt()}` }
+        : parsed;
     // The generated image is returned inside the JSON body as a data: URL; see generateGeminiImage().
-    const result = await generateGeminiImage(parsed);
+    const result = await generateGeminiImage(request);
     return Response.json(result satisfies GeminiImageGenerationResponse);
   } catch (err) {
     console.error("[image-generation-gemini]", err);

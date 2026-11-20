@@ -16,4 +16,14 @@ export function getGenerator(model: GenerationModelId): AdGenerator {
 }
 
 export { buildPrompt, buildRegeneratePrompt, buildFollowUpPrompt, buildResizePrompt, referenceCoversBoth } from "./prompt";
+export {
+  SAFE_ZONE_REFERENCE,
+  SAFE_ZONE_POLYGON_9X16,
+  SAFE_ZONE_CONTENT_9X16,
+  textSafeZonePolygon,
+  textSafeZoneContentRegions,
+  textSafeZoneInsets,
+  textSafeZonePolygonPath,
+  textSafeZonePrompt,
+} from "./safe-zone";
 export type { AdGenerator, GenerationJob, GenerationOutput, ImageInput } from "./types";

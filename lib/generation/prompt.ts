@@ -193,8 +193,6 @@ export function buildPrompt(brief: AdBrief, inputs: PromptInputs, dimension: Dim
     );
   }
 
-  if (dimension === "9x16") lines.push(textSafeZonePrompt());
-
   lines.push("Do not include any other company's logos or trademarks.");
   const brandMark = brandMarkLines(brief.brand);
   lines.push(brandMark.early);
@@ -226,6 +224,9 @@ export function buildPrompt(brief: AdBrief, inputs: PromptInputs, dimension: Dim
   }
 
   lines.push(brandMark.required);
+
+  // Safe-zone last so no creative instruction can override it.
+  if (dimension === "9x16") lines.push(textSafeZonePrompt());
 
   return lines.join("\n");
 }
@@ -261,6 +262,7 @@ export function buildFollowUpPrompt(instruction: string, dimension: Dimension, e
   if (extraImageCount === 1) lines.push("Image 2 is an additional image supplied with this request.");
   else if (extraImageCount > 1) lines.push(`Images 2-${1 + extraImageCount} are additional images supplied with this request.`);
   lines.push(`Instruction: ${instruction.trim()}`);
+  if (dimension === "9x16") lines.push(textSafeZonePrompt());
   return lines.join("\n");
 }
 

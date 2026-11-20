@@ -5,6 +5,7 @@
 
 import { useEffect, useState, type MouseEvent } from "react";
 import { DropZone } from "@/app/components/DropZone";
+import { SafeZoneOverlay } from "@/app/components/SafeZoneOverlay";
 import { BRANDS, type Product } from "@/lib/brands";
 import {
   GEMINI_ASPECT_RATIOS,
@@ -419,11 +420,13 @@ function ImageLightbox({
   index,
   onIndex,
   onClose,
+  showSafeZone,
 }: {
   images: { dataUrl: string }[];
   index: number;
   onIndex: (index: number) => void;
   onClose: () => void;
+  showSafeZone?: boolean;
 }) {
   const count = images.length;
   const image = images[index];
@@ -476,13 +479,18 @@ function ImageLightbox({
           ‹
         </button>
       )}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={image.dataUrl}
-        alt={`Generated image ${index + 1} of ${count}`}
-        className="max-h-[calc(100vh-5rem)] max-w-[calc(100vw-8rem)] object-contain"
+      <div
+        className="relative inline-block max-h-[calc(100vh-5rem)] max-w-[calc(100vw-8rem)]"
         onClick={(e) => e.stopPropagation()}
-      />
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={image.dataUrl}
+          alt={`Generated image ${index + 1} of ${count}`}
+          className="block max-h-[calc(100vh-5rem)] max-w-[calc(100vw-8rem)] object-contain"
+        />
+        {showSafeZone && <SafeZoneOverlay />}
+      </div>
       {count > 1 && (
         <button
           type="button"
@@ -565,8 +573,16 @@ export default function ImageGenerationTestPage() {
   const [qa, setQa] = useState<Record<string, QAState>>({});
   // Which generated image is open full screen, within its result.
   const [viewer, setViewer] = useState<{ resultId: number; index: number } | null>(null);
+  /** Dev preview of the 9:16 text safe zone. Not baked into downloads. */
+  const [showSafeZoneOverlay, setShowSafeZoneOverlay] = useState(false);
 
   const provider = providerOf(model);
+  const isNineSixteenResult = (result: Result) =>
+    result.settings.some(
+      ([label, value]) =>
+        value === "9:16" ||
+        (label.toLowerCase().includes("aspect") && value.includes("9:16")),
+    );
   const limits = PROVIDERS[provider];
   const slotsLeft = Math.max(0, limits.maxReferences - references.length);
   // Switching Gemini -> OpenAI can leave more references than OpenAI accepts, or files
@@ -1117,7 +1133,27 @@ export default function ImageGenerationTestPage() {
 
       {results.length > 0 && (
         <section className="mt-10 space-y-10">
-          <h2 className="text-lg font-semibold">Results</h2>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold">Results</h2>
+            {(results.some(isNineSixteenResult) ||
+              (provider === "gemini" && geminiSettings.aspectRatio === "9:16")) && (
+              <button
+                type="button"
+                role="switch"
+                aria-checked={showSafeZoneOverlay}
+                onClick={() => setShowSafeZoneOverlay((value) => !value)}
+                className={`rounded-lg border px-3 py-1.5 text-sm ${
+                  showSafeZoneOverlay
+                    ? "border-rose-500 bg-rose-50 text-rose-700"
+                    : "border-zinc-300 hover:bg-zinc-50"
+                }`}
+              >
+                {showSafeZoneOverlay
+                  ? "Hide 9:16 safe zone"
+                  : "Show 9:16 safe zone"}
+              </button>
+            )}
+          </div>
           {results.map((r) => (
             <article
               key={r.id}
@@ -1135,12 +1171,17 @@ export default function ImageGenerationTestPage() {
                       aria-label={`View generated image ${i + 1} full screen`}
                       className="block w-full cursor-zoom-in"
                     >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={img.dataUrl}
-                        alt={`Generated image ${i + 1}`}
-                        className="mx-auto max-h-[720px] w-auto rounded-lg bg-zinc-100 object-contain"
-                      />
+                      <span className="relative mx-auto inline-block max-h-[720px] max-w-full">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={img.dataUrl}
+                          alt={`Generated image ${i + 1}`}
+                          className="block max-h-[720px] w-auto rounded-lg bg-zinc-100 object-contain"
+                        />
+                        {showSafeZoneOverlay && isNineSixteenResult(r) && (
+                          <SafeZoneOverlay className="rounded-lg" />
+                        )}
+                      </span>
                     </button>
                     <a
                       href={img.dataUrl}
@@ -1231,6 +1272,9 @@ export default function ImageGenerationTestPage() {
           index={Math.min(viewer.index, openResult.images.length - 1)}
           onIndex={(index) => setViewer({ resultId: openResult.id, index })}
           onClose={() => setViewer(null)}
+          showSafeZone={
+            showSafeZoneOverlay && isNineSixteenResult(openResult)
+          }
         />
       )}
     </main>

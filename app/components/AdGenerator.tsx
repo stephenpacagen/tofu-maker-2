@@ -45,6 +45,7 @@ import {
   ScoreBadge,
   type ReferenceDraft,
 } from "./ReferenceCard";
+import { SafeZoneOverlay } from "./SafeZoneOverlay";
 
 /** Developer-only JSON panels on Creative input and References. Flip this to show them. */
 const SHOW_CREATIVE_BREAKDOWN = false;
@@ -209,6 +210,7 @@ function ResultFigure({
   selected,
   downloadName,
   loading,
+  showSafeZone,
   onOpen,
   onToggle,
   regenerate,
@@ -217,6 +219,7 @@ function ResultFigure({
   selected: boolean;
   downloadName: string;
   loading?: boolean;
+  showSafeZone?: boolean;
   onOpen: () => void;
   onToggle: () => void;
   regenerate?: {
@@ -249,13 +252,18 @@ function ResultFigure({
               selected ? "ring-brand" : "ring-transparent"
             }`}
           >
-            {/* eslint-disable-next-line @next/next/no-img-element -- generated data URL */}
-            <img
-              src={ad.imageUrl}
-              alt={`${ad.dimension} variation ${ad.variation}`}
-              title={ad.prompt}
-              className="h-auto w-full max-w-full rounded-lg bg-zinc-100 object-contain"
-            />
+            <span className="relative block w-full">
+              {/* eslint-disable-next-line @next/next/no-img-element -- generated data URL */}
+              <img
+                src={ad.imageUrl}
+                alt={`${ad.dimension} variation ${ad.variation}`}
+                title={ad.prompt}
+                className="h-auto w-full max-w-full rounded-lg bg-zinc-100 object-contain"
+              />
+              {showSafeZone && ad.dimension === "9x16" && (
+                <SafeZoneOverlay className="rounded-lg" />
+              )}
+            </span>
           </button>
         )}
         {!loading && (
@@ -667,6 +675,7 @@ function GenerationLightbox({
   groupNames,
   isSelected,
   onToggleSelected,
+  showSafeZone,
   onClose,
 }: {
   ads: GeneratedAd[];
@@ -674,6 +683,7 @@ function GenerationLightbox({
   groupNames: Record<string, string>;
   isSelected: (ad: GeneratedAd) => boolean;
   onToggleSelected: (ad: GeneratedAd) => void;
+  showSafeZone?: boolean;
   onClose: () => void;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
@@ -850,13 +860,20 @@ function GenerationLightbox({
                 className="flex h-full shrink-0 grow-0 basis-full snap-center flex-col items-center justify-center px-16 py-8"
                 onClick={onClose}
               >
-                {/* eslint-disable-next-line @next/next/no-img-element -- generated data URL */}
-                <img
-                  src={ad.imageUrl}
-                  alt={`${ad.dimension} variation ${ad.variation}, image ${i + 1} of ${ads.length}`}
-                  className="max-h-[calc(100dvh-11rem)] max-w-full object-contain"
+                <div
+                  className="relative inline-block max-h-[calc(100dvh-11rem)] max-w-full"
                   onClick={(e) => e.stopPropagation()}
-                />
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element -- generated data URL */}
+                  <img
+                    src={ad.imageUrl}
+                    alt={`${ad.dimension} variation ${ad.variation}, image ${i + 1} of ${ads.length}`}
+                    className="block max-h-[calc(100dvh-11rem)] max-w-full object-contain"
+                  />
+                  {showSafeZone && ad.dimension === "9x16" && (
+                    <SafeZoneOverlay />
+                  )}
+                </div>
                 <div
                   className="mt-4 flex flex-col items-center gap-3"
                   onClick={(e) => e.stopPropagation()}
@@ -1088,6 +1105,8 @@ export function AdGenerator({ brand }: { brand: Brand }) {
   const [ads, setAds] = useState<GeneratedAd[]>([]);
   const [openAdId, setOpenAdId] = useState<string | null>(null);
   const [confirmNewAdSet, setConfirmNewAdSet] = useState(false);
+  /** Dev preview of the 9:16 text safe zone on result images. Not baked into downloads. */
+  const [showSafeZoneOverlay, setShowSafeZoneOverlay] = useState(false);
   // Images start unselected. Only ids in this set are included in downloads.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [originals, setOriginals] = useState<
@@ -2753,13 +2772,33 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                 </span>
               )}
             </p>
-            <button
-              type="button"
-              onClick={() => setConfirmNewAdSet(true)}
-              className="btn-secondary shrink-0"
-            >
-              Start New Ad Set
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {(ads.some((ad) => ad.dimension === "9x16") ||
+                dimensions.includes("9x16")) && (
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={showSafeZoneOverlay}
+                  onClick={() => setShowSafeZoneOverlay((value) => !value)}
+                  className={`btn-secondary shrink-0 ${
+                    showSafeZoneOverlay
+                      ? "!border-rose-500 !bg-rose-50 !text-rose-700"
+                      : ""
+                  }`}
+                >
+                  {showSafeZoneOverlay
+                    ? "Hide 9:16 safe zone"
+                    : "Show 9:16 safe zone"}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setConfirmNewAdSet(true)}
+                className="btn-secondary shrink-0"
+              >
+                Start New Ad Set
+              </button>
+            </div>
           </div>
 
           {resultBatches.map((b) => {
@@ -2870,6 +2909,7 @@ export function AdGenerator({ brand }: { brand: Brand }) {
                                     selected={adIsSelected(ad)}
                                     downloadName={fileNameFor(shown)}
                                     loading={busy}
+                                    showSafeZone={showSafeZoneOverlay}
                                     onOpen={() => setOpenAdId(ad.id)}
                                     onToggle={() => toggleAd(ad)}
                                     regenerate={{
@@ -2959,6 +2999,7 @@ export function AdGenerator({ brand }: { brand: Brand }) {
               groupNames={groupNames}
               isSelected={adIsSelected}
               onToggleSelected={toggleAd}
+              showSafeZone={showSafeZoneOverlay}
               onClose={() => setOpenAdId(null)}
             />
           )}
